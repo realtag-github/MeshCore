@@ -88,6 +88,9 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NodePrefs _prefs;
   CommonCLI _cli;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
+  char pending_ping_reply[256];
+  uint8_t pending_ping_retries;
+  unsigned long next_ping_send_at;
   ClientACL  acl;
   TransportKeyStore key_store;
   RegionMap region_map, temp_map;
@@ -106,6 +109,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t pending_sf;
   uint8_t pending_cr;
   int  matching_peer_indexes[MAX_CLIENTS];
+  mesh::GroupChannel public_channel;
+  bool public_channel_ready;
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
 #elif defined(WITH_ESPNOW_BRIDGE)
@@ -116,6 +121,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
   int handleRequest(ClientInfo* sender, uint32_t sender_timestamp, uint8_t* payload, size_t payload_len);
   mesh::Packet* createSelfAdvert();
+  void initPublicChannel();
+  void sendPublicPingReply(const char* reply_text);
 
   File openAppend(const char* fname);
 
@@ -156,9 +163,11 @@ protected:
 
   void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;
   int searchPeersByHash(const uint8_t* hash) override;
+  int searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) override;
   void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override;
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len);
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
+  void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onControlDataRecv(mesh::Packet* packet) override;
 
