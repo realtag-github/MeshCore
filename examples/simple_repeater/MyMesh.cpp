@@ -1,5 +1,6 @@
 #include "MyMesh.h"
 #include <algorithm>
+#include <ctype.h>
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -54,6 +55,49 @@
 #define CLI_REPLY_DELAY_MILLIS      600
 
 #define LAZY_CONTACTS_WRITE_DELAY    5000
+#define PING_REPLY_ATTEMPTS          3
+#define PING_REPLY_RETRY_DELAY_MS    2000
+
+#define PUBLIC_GROUP_PSK  "izOH6cXN6mrJ5e26oRXNcg=="
+
+static void formatPathString(const uint8_t* path, uint8_t path_len, char* dest, size_t dest_len) {
+  if (dest_len == 0) return;
+  dest[0] = 0;
+  if (path_len == 0) {
+    strncpy(dest, "direct", dest_len);
+    dest[dest_len - 1] = 0;
+    return;
+  }
+
+  size_t used = 0;
+  for (uint8_t i = 0; i < path_len; i++) {
+    const char* sep = (i == 0) ? "" : "→";
+    int written = snprintf(dest + used, dest_len - used, "%s%02X", sep, path[i]);
+    if (written < 0 || (size_t)written >= dest_len - used) {
+      dest[dest_len - 1] = 0;
+      return;
+    }
+    used += (size_t)written;
+  }
+}
+
+static const char* findMessageBody(const char* text, const char* node_name, char* sender, size_t sender_len) {
+  if (sender_len == 0) return NULL;
+  sender[0] = 0;
+  const char* sep = strstr(text, ": ");
+  if (sep) {
+    size_t name_len = sep - text;
+    if (name_len >= sender_len) name_len = sender_len - 1;
+    memcpy(sender, text, name_len);
+    sender[name_len] = 0;
+    if (name_len > 0 && strncmp(text, node_name, name_len) == 0 && node_name[name_len] == 0) {
+      return NULL;  // ignore our own messages
+    }
+    text = sep + 2;
+  }
+  while (*text == ' ') text++;
+  return text;
+}
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
@@ -463,6 +507,41 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
   }
 }
 
+void MyMesh::initPublicChannel() {
+  public_channel_ready = false;
+  memset(public_channel.hash, 0, sizeof(public_channel.hash));
+  memset(public_channel.secret, 0, sizeof(public_channel.secret));
+  static const uint8_t public_secret[16] = {
+    0x8b, 0x33, 0x87, 0xe9, 0xc5, 0xcd, 0xea, 0x6a,
+    0xc9, 0xe5, 0xed, 0xba, 0xa1, 0x15, 0xcd, 0x72
+  };
+  memcpy(public_channel.secret, public_secret, sizeof(public_secret));
+  mesh::Utils::sha256(public_channel.hash, sizeof(public_channel.hash), public_channel.secret, sizeof(public_secret));
+  public_channel_ready = true;
+}
+
+void MyMesh::sendPublicPingReply(const char* reply_text) {
+  if (!public_channel_ready) return;
+
+  int attempt = PING_REPLY_ATTEMPTS - pending_ping_retries + 1;
+  if (attempt < 1) attempt = 1;
+  if (attempt > PING_REPLY_ATTEMPTS) attempt = PING_REPLY_ATTEMPTS;
+
+  uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+  uint8_t temp[MAX_PACKET_PAYLOAD];
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
+           _prefs.node_name, reply_text, attempt, PING_REPLY_ATTEMPTS);
+  size_t msg_len = strlen((char*)&temp[5]);
+
+  auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, public_channel, temp, 5 + msg_len);
+  if (reply) {
+    sendFlood(reply, SERVER_RESPONSE_DELAY);
+  }
+}
+
 int MyMesh::searchPeersByHash(const uint8_t *hash) {
   int n = 0;
   for (int i = 0; i < acl.getNumClients(); i++) {
@@ -471,6 +550,15 @@ int MyMesh::searchPeersByHash(const uint8_t *hash) {
     }
   }
   return n;
+}
+
+int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) {
+  if (!public_channel_ready || max_matches <= 0) return 0;
+  if (memcmp(public_channel.hash, hash, PATH_HASH_SIZE) == 0) {
+    channels[0] = public_channel;
+    return 1;
+  }
+  return 0;
 }
 
 void MyMesh::getPeerSharedSecret(uint8_t *dest_secret, int peer_idx) {
@@ -606,6 +694,47 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
   }
 }
 
+void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) {
+  if (type != PAYLOAD_TYPE_GRP_TXT || !public_channel_ready) return;
+  if (memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) != 0) return;
+  if (len <= 5 || len >= MAX_PACKET_PAYLOAD) return;
+
+  uint8_t txt_type = data[4] >> 2;
+  if (txt_type != TXT_TYPE_PLAIN) return;
+
+  data[len] = 0;  // ensure null-terminated string
+  const char* text = (const char*)&data[5];
+  char sender_name[40];
+  const char* body = findMessageBody(text, _prefs.node_name, sender_name, sizeof(sender_name));
+  if (!body) return;
+
+  if (strncmp(body, "!ping", 5) != 0) return;
+  if (body[5] != 0 && !isspace(static_cast<unsigned char>(body[5]))) return;
+
+  char path_str[384];
+  formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
+
+  char reply_text[256];
+  if (sender_name[0] == 0) {
+    StrHelper::strncpy(sender_name, "Unknown", sizeof(sender_name));
+  }
+  snprintf(reply_text, sizeof(reply_text),
+           "Pong, @[%s]. Path: %s",
+           sender_name, path_str);
+
+  StrHelper::strncpy(pending_ping_reply, reply_text, sizeof(pending_ping_reply));
+  pending_ping_retries = PING_REPLY_ATTEMPTS;
+  next_ping_send_at = 0;
+
+  if (pending_ping_retries > 0) {
+    sendPublicPingReply(pending_ping_reply);
+    pending_ping_retries--;
+    if (pending_ping_retries > 0) {
+      next_ping_send_at = futureMillis(PING_REPLY_RETRY_DELAY_MS);
+    }
+  }
+}
+
 bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t *secret, uint8_t *path,
                             uint8_t path_len, uint8_t extra_type, uint8_t *extra, uint8_t extra_len) {
   // TODO: prevent replay attacks
@@ -675,7 +804,11 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   dirty_contacts_expiry = 0;
   set_radio_at = revert_radio_at = 0;
   _logging = false;
+  public_channel_ready = false;
   region_load_active = false;
+  pending_ping_reply[0] = 0;
+  pending_ping_retries = 0;
+  next_ping_send_at = 0;
 
 #if MAX_NEIGHBOURS
   memset(neighbours, 0, sizeof(neighbours));
@@ -726,6 +859,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
   acl.load(_fs);
   // TODO: key_store.begin();
   region_map.load(_fs);
+  initPublicChannel();
 
 #if defined(WITH_BRIDGE)
   if (_prefs.bridge_enabled) {
@@ -1102,6 +1236,16 @@ void MyMesh::loop() {
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     acl.save(_fs);
     dirty_contacts_expiry = 0;
+  }
+
+  if (pending_ping_retries && next_ping_send_at && millisHasNowPassed(next_ping_send_at)) {
+    sendPublicPingReply(pending_ping_reply);
+    pending_ping_retries--;
+    if (pending_ping_retries) {
+      next_ping_send_at = futureMillis(PING_REPLY_RETRY_DELAY_MS);
+    } else {
+      next_ping_send_at = 0;
+    }
   }
 
   // update uptime
