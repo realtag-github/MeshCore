@@ -2,6 +2,10 @@
 #include <Arduino.h>
 #include <helpers/CommonCLI.h>
 
+#if defined(ESP32)
+  #include <WiFi.h>
+#endif
+
 #ifndef USER_BTN_PRESSED
 #define USER_BTN_PRESSED LOW
 #endif
@@ -81,6 +85,20 @@ void UITask::renderCurrScreen() {
     _display->setCursor(0, 30);
     sprintf(tmp, "BW: %03.2f CR: %d", _node_prefs->bw, _node_prefs->cr);
     _display->print(tmp);
+
+#if defined(ESP32)
+    _display->setCursor(0, 40);
+    _display->setColor(DisplayDriver::LIGHT);
+    if (_node_prefs->wifi_ssid[0] == 0) {
+      snprintf(tmp, sizeof(tmp), "WiFi:OFF");
+    } else if (WiFi.status() == WL_CONNECTED) {
+      String ip = WiFi.localIP().toString();
+      snprintf(tmp, sizeof(tmp), "WiFi:OK %s", ip.c_str());
+    } else {
+      snprintf(tmp, sizeof(tmp), "WiFi:ERR");
+    }
+    _display->print(tmp);
+#endif
   }
 }
 

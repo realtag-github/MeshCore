@@ -1,5 +1,12 @@
 #include "MyMesh.h"
 #include <algorithm>
+#include <ctype.h>
+
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <HTTPClient.h>
+  #include <WiFiClientSecure.h>
+#endif
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -59,6 +66,148 @@
 #define CLI_REPLY_DELAY_MILLIS      600
 
 #define LAZY_CONTACTS_WRITE_DELAY    5000
+#define PING_REPLY_ATTEMPTS          3
+#define PING_REPLY_RETRY_DELAY_MS    2000
+#define TEST_BROADCAST_INTERVAL_MS   (60UL * 60UL * 1000UL)
+
+#define PUBLIC_GROUP_PSK  "izOH6cXN6mrJ5e26oRXNcg=="
+static const uint8_t TEST_GROUP_SECRET[16] = {
+  0x9c, 0xd8, 0xfc, 0xf2, 0x2a, 0x47, 0x33, 0x3b,
+  0x59, 0x1d, 0x96, 0xa2, 0xb8, 0x48, 0xb7, 0x3f
+};
+
+#if defined(ESP32)
+  #define DISCORD_WEBHOOK_MIN_INTERVAL_MS 200
+  #define DISCORD_WEBHOOK_RETRY_DELAY_MS 2000
+
+static size_t jsonEscape(const char* src, char* dst, size_t dst_len) {
+  if (dst_len == 0) return 0;
+  size_t w = 0;
+  for (; *src && w + 1 < dst_len; ++src) {
+    unsigned char c = (unsigned char)*src;
+    if (c == '\\' || c == '"') {
+      if (w + 2 >= dst_len) break;
+      dst[w++] = '\\';
+      dst[w++] = (char)c;
+    } else if (c == '\n') {
+      if (w + 2 >= dst_len) break;
+      dst[w++] = '\\';
+      dst[w++] = 'n';
+    } else if (c == '\r') {
+      if (w + 2 >= dst_len) break;
+      dst[w++] = '\\';
+      dst[w++] = 'r';
+    } else if (c == '\t') {
+      if (w + 2 >= dst_len) break;
+      dst[w++] = '\\';
+      dst[w++] = 't';
+    } else if (c < 0x20) {
+      if (w + 6 >= dst_len) break;
+      snprintf(&dst[w], dst_len - w, "\\u%04x", c);
+      w += 6;
+    } else {
+      dst[w++] = (char)c;
+    }
+  }
+  dst[w] = 0;
+  return w;
+}
+#endif
+
+uint8_t MyMesh::calcBusyPercent() {
+  uint32_t now_ms = millis();
+  uint32_t tx_ms = getTotalAirTime();
+  uint32_t rx_ms = getReceiveAirTime();
+  if (last_busy_sample_ms == 0 || now_ms <= last_busy_sample_ms) {
+    last_busy_sample_ms = now_ms;
+    last_busy_tx_ms = tx_ms;
+    last_busy_rx_ms = rx_ms;
+    return 0;
+  }
+
+  uint32_t delta_ms = now_ms - last_busy_sample_ms;
+  uint32_t delta_air_ms = (tx_ms - last_busy_tx_ms) + (rx_ms - last_busy_rx_ms);
+
+  last_busy_sample_ms = now_ms;
+  last_busy_tx_ms = tx_ms;
+  last_busy_rx_ms = rx_ms;
+
+  if (delta_ms == 0) return 0;
+  uint32_t busy = (delta_air_ms * 100UL) / delta_ms;
+  if (busy > 100) busy = 100;
+  return (uint8_t)busy;
+}
+
+static void formatPathString(const uint8_t* path, uint8_t path_len, char* dest, size_t dest_len) {
+  if (dest_len == 0) return;
+  dest[0] = 0;
+  if (path_len == 0) {
+    strncpy(dest, "direct", dest_len);
+    dest[dest_len - 1] = 0;
+    return;
+  }
+
+  size_t used = 0;
+  for (uint8_t i = 0; i < path_len; i++) {
+    const char* sep = (i == 0) ? "" : "→";
+    int written = snprintf(dest + used, dest_len - used, "%s%02X", sep, path[i]);
+    if (written < 0 || (size_t)written >= dest_len - used) {
+      dest[dest_len - 1] = 0;
+      return;
+    }
+    used += (size_t)written;
+  }
+}
+
+static const char* findMessageBody(const char* text, const char* node_name, char* sender, size_t sender_len) {
+  if (sender_len == 0) return NULL;
+  sender[0] = 0;
+  const char* sep = strstr(text, ": ");
+  if (sep) {
+    size_t name_len = sep - text;
+    if (name_len >= sender_len) name_len = sender_len - 1;
+    memcpy(sender, text, name_len);
+    sender[name_len] = 0;
+    if (name_len > 0 && strncmp(text, node_name, name_len) == 0 && node_name[name_len] == 0) {
+      return NULL;  // ignore our own messages
+    }
+    text = sep + 2;
+  }
+  while (*text == ' ') text++;
+  return text;
+}
+
+static const char* findMessageBodyAllowSelf(const char* text, char* sender, size_t sender_len) {
+  if (sender_len == 0) return NULL;
+  sender[0] = 0;
+  const char* sep = strstr(text, ": ");
+  if (sep) {
+    size_t name_len = sep - text;
+    if (name_len >= sender_len) name_len = sender_len - 1;
+    memcpy(sender, text, name_len);
+    sender[name_len] = 0;
+    text = sep + 2;
+  }
+  while (*text == ' ') text++;
+  return text;
+}
+
+static bool containsSubstringCaseInsensitive(const char* haystack, const char* needle) {
+  if (!haystack || !needle) return false;
+  if (needle[0] == 0) return true;
+  for (const char* h = haystack; *h; ++h) {
+    const char* h_it = h;
+    const char* n_it = needle;
+    while (*h_it && *n_it &&
+           tolower(static_cast<unsigned char>(*h_it)) ==
+               tolower(static_cast<unsigned char>(*n_it))) {
+      ++h_it;
+      ++n_it;
+    }
+    if (*n_it == 0) return true;
+  }
+  return false;
+}
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
 #if MAX_NEIGHBOURS // check if neighbours enabled
@@ -603,12 +752,278 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
   }
 }
 
+void MyMesh::initPublicChannel() {
+  public_channel_ready = false;
+  memset(public_channel.hash, 0, sizeof(public_channel.hash));
+  memset(public_channel.secret, 0, sizeof(public_channel.secret));
+  static const uint8_t public_secret[16] = {
+    0x8b, 0x33, 0x87, 0xe9, 0xc5, 0xcd, 0xea, 0x6a,
+    0xc9, 0xe5, 0xed, 0xba, 0xa1, 0x15, 0xcd, 0x72
+  };
+  memcpy(public_channel.secret, public_secret, sizeof(public_secret));
+  mesh::Utils::sha256(public_channel.hash, sizeof(public_channel.hash), public_channel.secret, sizeof(public_secret));
+  public_channel_ready = true;
+}
+
+void MyMesh::initTestChannel() {
+  test_channel_ready = false;
+  memset(test_channel.hash, 0, sizeof(test_channel.hash));
+  memset(test_channel.secret, 0, sizeof(test_channel.secret));
+  memcpy(test_channel.secret, TEST_GROUP_SECRET, sizeof(TEST_GROUP_SECRET));
+  mesh::Utils::sha256(test_channel.hash, sizeof(test_channel.hash), test_channel.secret, sizeof(TEST_GROUP_SECRET));
+  test_channel_ready = true;
+}
+
+#if defined(ESP32)
+void MyMesh::initWifiClient() {
+  if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) return;
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  MESH_DEBUG_PRINTLN("WiFi: connecting to AP '%s'", _prefs.wifi_ssid);
+  WiFi.begin(_prefs.wifi_ssid, _prefs.wifi_pwd);
+  next_wifi_attempt_at = futureMillis(15000);
+}
+
+void MyMesh::queueDiscordWebhook(const char* sender, const char* body) {
+  if (_prefs.discord_webhook_url[0] == 0) return;
+  if (webhook_count >= DISCORD_WEBHOOK_QUEUE_SIZE) {
+    MESH_DEBUG_PRINTLN("Discord webhook queue full, dropping oldest");
+    webhook_head = (uint8_t)((webhook_head + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
+    webhook_count--;
+  }
+  WebhookItem* item = &webhook_queue[webhook_tail];
+  StrHelper::strncpy(item->sender, sender, sizeof(item->sender));
+  StrHelper::strncpy(item->body, body, sizeof(item->body));
+  webhook_tail = (uint8_t)((webhook_tail + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
+  webhook_count++;
+  next_webhook_attempt_at = 0;
+}
+
+void MyMesh::pumpDiscordWebhook() {
+  if (webhook_count == 0) return;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (next_wifi_attempt_at && millisHasNowPassed(next_wifi_attempt_at)) {
+      if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) return;
+      MESH_DEBUG_PRINTLN("WiFi: not connected, retrying AP '%s'", _prefs.wifi_ssid);
+      WiFi.begin(_prefs.wifi_ssid, _prefs.wifi_pwd);
+      next_wifi_attempt_at = futureMillis(15000);
+    }
+    return;
+  }
+
+  if (next_webhook_attempt_at && !millisHasNowPassed(next_webhook_attempt_at)) return;
+
+  WebhookItem* item = &webhook_queue[webhook_head];
+
+  char esc_sender[80];
+  char esc_body[256];
+  jsonEscape(item->sender, esc_sender, sizeof(esc_sender));
+  jsonEscape(item->body, esc_body, sizeof(esc_body));
+
+  char payload[512];
+  snprintf(payload, sizeof(payload),
+           "{\"username\":\"%s\",\"avatar_url\":\"http://cedarmesh.ca/images/mc_logo.png\",\"content\":\"%s\"}",
+           esc_sender, esc_body);
+
+  char url_buf[192];
+  StrHelper::strncpy(url_buf, _prefs.discord_webhook_url, sizeof(url_buf));
+  size_t start = 0;
+  while (url_buf[start] && (unsigned char)url_buf[start] <= ' ') start++;
+  size_t end = strlen(url_buf);
+  while (end > start && (unsigned char)url_buf[end - 1] <= ' ') end--;
+  url_buf[end] = 0;
+  const char* url = url_buf + start;
+  if (*url == 0) return;
+
+  bool is_https = false;
+  bool is_http = false;
+  const char* p = url;
+  const char* https_scheme = "https://";
+  const char* http_scheme = "http://";
+  auto starts_with_ci = [](const char* s, const char* prefix, int n) -> bool {
+    for (int i = 0; i < n; i++) {
+      char c = s[i];
+      if (!c) return false;
+      if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+      char pfx = prefix[i];
+      if (c != pfx) return false;
+    }
+    return true;
+  };
+  if (starts_with_ci(p, https_scheme, 8)) {
+    is_https = true;
+  } else if (starts_with_ci(p, http_scheme, 7)) {
+    is_http = true;
+  } else {
+    // Search for a scheme inside the string in case of hidden prefix chars.
+    const char* s = p;
+    while (*s) {
+      if (starts_with_ci(s, https_scheme, 8)) { p = s; is_https = true; break; }
+      if (starts_with_ci(s, http_scheme, 7)) { p = s; is_http = true; break; }
+      s++;
+    }
+  }
+  if (!is_https && !is_http) {
+    MESH_DEBUG_PRINTLN("Discord webhook invalid scheme");
+    return;
+  }
+  char lead_hex[24];
+  int lh = 0;
+  for (int i = 0; i < 8 && url[i]; i++) {
+    lh += snprintf(lead_hex + lh, sizeof(lead_hex) - lh, "%02X", (unsigned char)url[i]);
+  }
+  MESH_DEBUG_PRINTLN("Discord webhook scheme: %s lead=%s", is_https ? "https" : "http", lead_hex);
+
+  const char* host = url;
+  if (is_https) host += 8;
+  else if (is_http) host += 7;
+
+  const char* path = strchr(host, '/');
+  char host_buf[128];
+  if (path) {
+    size_t host_len = (size_t)(path - host);
+    if (host_len >= sizeof(host_buf)) host_len = sizeof(host_buf) - 1;
+    memcpy(host_buf, host, host_len);
+    host_buf[host_len] = 0;
+  } else {
+    StrHelper::strncpy(host_buf, host, sizeof(host_buf));
+    path = "/";
+  }
+
+  int code = -1;
+  String resp;
+  if (is_https) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    if (!client.connect(host_buf, 443)) {
+      MESH_DEBUG_PRINTLN("Discord webhook TLS connect failed");
+      next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_RETRY_DELAY_MS);
+      return;
+    }
+    client.printf("POST %s HTTP/1.1\r\n", path);
+    client.printf("Host: %s\r\n", host_buf);
+    client.printf("User-Agent: MeshCore\r\n");
+    client.printf("Content-Type: application/json\r\n");
+    client.printf("Content-Length: %u\r\n", (unsigned)strlen(payload));
+    client.printf("Connection: close\r\n\r\n");
+    client.write((const uint8_t*)payload, strlen(payload));
+
+    // Read status line
+    String status = client.readStringUntil('\n');
+    status.trim();
+    if (status.startsWith("HTTP/")) {
+      int sp = status.indexOf(' ');
+      if (sp > 0) {
+        code = status.substring(sp + 1).toInt();
+      }
+    }
+    // Read headers, then body
+    while (client.connected()) {
+      String line = client.readStringUntil('\n');
+      if (line == "\r" || line.length() == 0) break;
+    }
+    resp = client.readString();
+    client.stop();
+  } else {
+    HTTPClient http;
+    WiFiClient client;
+    http.begin(client, host_buf, 80, path, false);
+    http.addHeader("Content-Type", "application/json");
+    code = http.POST((uint8_t*)payload, strlen(payload));
+    resp = http.getString();
+    http.end();
+  }
+
+  if (code >= 200 && code < 300) {
+    webhook_head = (uint8_t)((webhook_head + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
+    webhook_count--;
+    MESH_DEBUG_PRINTLN("Discord webhook OK: HTTP %d", code);
+    next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_MIN_INTERVAL_MS);
+  } else {
+    char resp_buf[160];
+    resp_buf[0] = 0;
+    if (resp.length() > 0) {
+      size_t n = (resp.length() < sizeof(resp_buf) - 1) ? resp.length() : sizeof(resp_buf) - 1;
+      memcpy(resp_buf, resp.c_str(), n);
+      resp_buf[n] = 0;
+    }
+    MESH_DEBUG_PRINTLN("Discord webhook failed: HTTP %d body=%s", code, resp_buf[0] ? resp_buf : "<empty>");
+    next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_RETRY_DELAY_MS);
+  }
+}
+#endif
+
+bool MyMesh::isPingChannel(const mesh::GroupChannel& channel) const {
+  if (_prefs.ping_public_enabled && public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0) return true;
+  if (test_channel_ready && memcmp(channel.hash, test_channel.hash, PATH_HASH_SIZE) == 0) return true;
+  return false;
+}
+
+void MyMesh::sendPingReply(const mesh::GroupChannel& channel, const char* reply_text) {
+  if (!public_channel_ready && !test_channel_ready) return;
+
+  int attempt = PING_REPLY_ATTEMPTS - pending_ping_retries + 1;
+  if (attempt < 1) attempt = 1;
+  if (attempt > PING_REPLY_ATTEMPTS) attempt = PING_REPLY_ATTEMPTS;
+
+  uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+  uint8_t temp[MAX_PACKET_PAYLOAD];
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
+           _prefs.node_name, reply_text, attempt, PING_REPLY_ATTEMPTS);
+  size_t msg_len = strlen((char*)&temp[5]);
+
+  auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
+  if (reply) {
+    sendFlood(reply, SERVER_RESPONSE_DELAY);
+  }
+}
+
+void MyMesh::sendPublicBroadcast(const mesh::GroupChannel& channel) {
+  if (!test_channel_ready && !public_channel_ready) return;
+
+  uint32_t timestamp = millis() / 1000;
+  int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+  uint8_t busy_pct = calcBusyPercent();
+  uint8_t temp[MAX_PACKET_PAYLOAD];
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: North York NF %ddBm Busy %u%%",
+           _prefs.node_name, noise_floor, busy_pct);
+  size_t msg_len = strlen((char*)&temp[5]);
+  if (msg_len > 134) {
+    msg_len = 134;
+    temp[5 + msg_len] = 0;
+  }
+
+  auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
+  if (pkt) {
+    sendFlood(pkt, SERVER_RESPONSE_DELAY);
+  }
+}
+
 int MyMesh::searchPeersByHash(const uint8_t *hash) {
   int n = 0;
   for (int i = 0; i < acl.getNumClients(); i++) {
     if (acl.getClientByIdx(i)->id.isHashMatch(hash)) {
       matching_peer_indexes[n++] = i; // store the INDEXES of matching contacts (for subsequent 'peer' methods)
     }
+  }
+  return n;
+}
+
+int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) {
+  if (max_matches <= 0) return 0;
+  int n = 0;
+  if (public_channel_ready && memcmp(public_channel.hash, hash, PATH_HASH_SIZE) == 0) {
+    channels[n++] = public_channel;
+  }
+  if (test_channel_ready && n < max_matches && memcmp(test_channel.hash, hash, PATH_HASH_SIZE) == 0) {
+    channels[n++] = test_channel;
   }
   return n;
 }
@@ -746,6 +1161,66 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
   }
 }
 
+void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) {
+  if (type != PAYLOAD_TYPE_GRP_TXT || (!public_channel_ready && !test_channel_ready)) return;
+  if (len <= 5 || len >= MAX_PACKET_PAYLOAD) return;
+
+  uint8_t txt_type = data[4] >> 2;
+  if (txt_type != TXT_TYPE_PLAIN) return;
+
+  data[len] = 0;  // ensure null-terminated string
+  const char* text = (const char*)&data[5];
+  char sender_name[40];
+  const char* body = findMessageBody(text, _prefs.node_name, sender_name, sizeof(sender_name));
+
+#if defined(ESP32)
+  if (public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0) {
+    char any_sender[40];
+    const char* any_body = findMessageBodyAllowSelf(text, any_sender, sizeof(any_sender));
+    if (any_body) {
+      char path_str[384];
+      formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
+      char combined[200];
+      snprintf(combined, sizeof(combined), "[From: \"Public Channel\" Hops: %s] %s", path_str, any_body);
+      queueDiscordWebhook(any_sender[0] ? any_sender : "Unknown", combined);
+    }
+  }
+#endif
+
+  if (!body) return;
+  if (!isPingChannel(channel)) return;
+  bool is_ping = containsSubstringCaseInsensitive(body, "!ping");
+  bool is_test = containsSubstringCaseInsensitive(body, "test");
+  if (!is_ping && !is_test) return;
+
+  char path_str[384];
+  formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
+
+  char reply_text[256];
+  if (sender_name[0] == 0) {
+    StrHelper::strncpy(sender_name, "Unknown", sizeof(sender_name));
+  }
+  int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+  uint8_t busy_pct = calcBusyPercent();
+  snprintf(reply_text, sizeof(reply_text),
+           "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%%",
+           sender_name, path_str, noise_floor, busy_pct);
+
+  StrHelper::strncpy(pending_ping_reply, reply_text, sizeof(pending_ping_reply));
+  pending_ping_channel = channel;
+  pending_ping_channel_ready = true;
+  pending_ping_retries = PING_REPLY_ATTEMPTS;
+  next_ping_send_at = 0;
+
+  if (pending_ping_retries > 0) {
+    sendPingReply(pending_ping_channel, pending_ping_reply);
+    pending_ping_retries--;
+    if (pending_ping_retries > 0) {
+      next_ping_send_at = futureMillis(PING_REPLY_RETRY_DELAY_MS);
+    }
+  }
+}
+
 bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t *secret, uint8_t *path,
                             uint8_t path_len, uint8_t extra_type, uint8_t *extra, uint8_t extra_len) {
   // TODO: prevent replay attacks
@@ -862,7 +1337,24 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   dirty_contacts_expiry = 0;
   set_radio_at = revert_radio_at = 0;
   _logging = false;
+  public_channel_ready = false;
+  test_channel_ready = false;
   region_load_active = false;
+  pending_ping_reply[0] = 0;
+  pending_ping_retries = 0;
+  next_ping_send_at = 0;
+  next_public_broadcast_at = 0;
+  last_busy_sample_ms = 0;
+  last_busy_tx_ms = 0;
+  last_busy_rx_ms = 0;
+  pending_ping_channel_ready = false;
+#if defined(ESP32)
+  next_wifi_attempt_at = 0;
+  next_webhook_attempt_at = 0;
+  webhook_head = 0;
+  webhook_tail = 0;
+  webhook_count = 0;
+#endif
 
 #if MAX_NEIGHBOURS
   memset(neighbours, 0, sizeof(neighbours));
@@ -914,8 +1406,27 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 
   pending_discover_tag = 0;
   pending_discover_until = 0;
-
   memset(default_scope.key, 0, sizeof(default_scope.key));
+  _prefs.wifi_ssid[0] = 0;
+  _prefs.wifi_pwd[0] = 0;
+  _prefs.discord_webhook_url[0] = 0;
+  _prefs.ping_public_enabled = 0;
+  _prefs.ping_public_max_replies = 0;
+  _prefs.ping_test_enabled = 0;
+  _prefs.ping_test_max_replies = 3;
+  _prefs.ping_simple_enabled = 0;
+  _prefs.hourly_status_enabled = 1;
+  _prefs.busy_delay_threshold = 20;
+  _prefs.busy_delay_max_secs = 120;
+#ifdef WIFI_SSID
+  StrHelper::strncpy(_prefs.wifi_ssid, WIFI_SSID, sizeof(_prefs.wifi_ssid));
+#endif
+#ifdef WIFI_PWD
+  StrHelper::strncpy(_prefs.wifi_pwd, WIFI_PWD, sizeof(_prefs.wifi_pwd));
+#endif
+#ifdef DISCORD_WEBHOOK_URL
+  StrHelper::strncpy(_prefs.discord_webhook_url, DISCORD_WEBHOOK_URL, sizeof(_prefs.discord_webhook_url));
+#endif
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -926,6 +1437,12 @@ void MyMesh::begin(FILESYSTEM *fs) {
   acl.load(_fs, self_id);
   // TODO: key_store.begin();
   region_map.load(_fs);
+  initPublicChannel();
+  initTestChannel();
+
+#if defined(ESP32)
+  initWifiClient();
+#endif
 
   // establish default-scope
   {
@@ -962,6 +1479,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
+  next_public_broadcast_at = futureMillis(5000);
 
   board.setAdcMultiplier(_prefs.adc_multiplier);
 
@@ -1251,6 +1769,221 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       sendNodeDiscoverReq();
       strcpy(reply, "OK - Discover sent");
     }
+  } else if (memcmp(command, "wifi", 4) == 0) {
+#if defined(ESP32)
+    char *sub = command + 4;
+    if (*sub == '.' || *sub == ' ') sub++;
+    while (*sub == ' ') sub++;
+
+    if (*sub == 0 || strcmp(sub, "status") == 0) {
+      if (_prefs.wifi_ssid[0] == 0) {
+        strcpy(reply, "wifi: off");
+      } else if (WiFi.status() == WL_CONNECTED) {
+        String ip = WiFi.localIP().toString();
+        snprintf(reply, 160, "wifi: ok ip=%s", ip.c_str());
+      } else {
+        strcpy(reply, "wifi: err");
+      }
+    } else if (memcmp(sub, "ssid", 4) == 0) {
+      const char* val = sub + 4;
+      while (*val == ' ') val++;
+      if (*val == 0) {
+        if (_prefs.wifi_ssid[0]) {
+          snprintf(reply, 160, "wifi.ssid=%s", _prefs.wifi_ssid);
+        } else {
+          strcpy(reply, "wifi.ssid=empty");
+        }
+      } else {
+        StrHelper::strncpy(_prefs.wifi_ssid, val, sizeof(_prefs.wifi_ssid));
+        savePrefs();
+        initWifiClient();
+        strcpy(reply, "OK");
+      }
+    } else if (memcmp(sub, "pwd", 3) == 0 || memcmp(sub, "pass", 4) == 0) {
+      const char* val = (memcmp(sub, "pass", 4) == 0) ? (sub + 4) : (sub + 3);
+      while (*val == ' ') val++;
+      if (*val == 0) {
+        if (_prefs.wifi_pwd[0]) {
+          snprintf(reply, 160, "wifi.pwd=*** (len=%u)", (unsigned)strlen(_prefs.wifi_pwd));
+        } else {
+          strcpy(reply, "wifi.pwd=empty");
+        }
+      } else {
+        StrHelper::strncpy(_prefs.wifi_pwd, val, sizeof(_prefs.wifi_pwd));
+        savePrefs();
+        initWifiClient();
+        strcpy(reply, "OK");
+      }
+    } else if (memcmp(sub, "test", 4) == 0) {
+      if (_prefs.discord_webhook_url[0] == 0) {
+        strcpy(reply, "Err - webhook not set");
+      } else {
+        queueDiscordWebhook("WebhookTest", "test message");
+        strcpy(reply, "OK");
+      }
+    } else if (memcmp(sub, "webhook", 7) == 0) {
+      const char* val = sub + 7;
+      while (*val == ' ') val++;
+      if (*val == 0) {
+        if (_prefs.discord_webhook_url[0]) {
+          snprintf(reply, 160, "wifi.webhook=set (len=%u)", (unsigned)strlen(_prefs.discord_webhook_url));
+        } else {
+          strcpy(reply, "wifi.webhook=empty");
+        }
+      } else if (strcmp(val, "test") == 0) {
+        if (_prefs.discord_webhook_url[0] == 0) {
+          strcpy(reply, "Err - webhook not set");
+        } else {
+          queueDiscordWebhook("WebhookTest", "test message");
+          strcpy(reply, "OK");
+        }
+      } else if (strcmp(val, "clear") == 0) {
+        _prefs.discord_webhook_url[0] = 0;
+        savePrefs();
+        strcpy(reply, "OK");
+      } else {
+        StrHelper::strncpy(_prefs.discord_webhook_url, val, sizeof(_prefs.discord_webhook_url));
+        savePrefs();
+        strcpy(reply, "OK");
+      }
+    } else if (strcmp(sub, "connect") == 0) {
+      initWifiClient();
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Err - ??");
+    }
+#else
+    strcpy(reply, "Err - unsupported");
+#endif
+  } else if (memcmp(command, "region", 6) == 0) {
+    reply[0] = 0;
+
+    const char* parts[4];
+    int n = mesh::Utils::parseTextParts(command, parts, 4, ' ');
+    if (n == 1) {
+      region_map.exportTo(reply, 160);
+    } else if (n >= 2 && strcmp(parts[1], "load") == 0) {
+      temp_map.resetFrom(region_map);   // rebuild regions in a temp instance
+      memset(load_stack, 0, sizeof(load_stack));
+      load_stack[0] = &temp_map.getWildcard();
+      region_load_active = true;
+    } else if (n >= 2 && strcmp(parts[1], "save") == 0) {
+      _prefs.discovery_mod_timestamp = rtc_clock.getCurrentTime();   // this node is now 'modified' (for discovery info)
+      savePrefs();
+      bool success = region_map.save(_fs);
+      strcpy(reply, success ? "OK" : "Err - save failed");
+    } else if (n >= 3 && strcmp(parts[1], "allowf") == 0) {
+      auto region = region_map.findByNamePrefix(parts[2]);
+      if (region) {
+        region->flags &= ~REGION_DENY_FLOOD;
+        strcpy(reply, "OK");
+      } else {
+        strcpy(reply, "Err - unknown region");
+      }
+    } else if (n >= 3 && strcmp(parts[1], "denyf") == 0) {
+      auto region = region_map.findByNamePrefix(parts[2]);
+      if (region) {
+        region->flags |= REGION_DENY_FLOOD;
+        strcpy(reply, "OK");
+      } else {
+        strcpy(reply, "Err - unknown region");
+      }
+    } else if (n >= 3 && strcmp(parts[1], "get") == 0) {
+      auto region = region_map.findByNamePrefix(parts[2]);
+      if (region) {
+        auto parent = region_map.findById(region->parent);
+        if (parent && parent->id != 0) {
+          sprintf(reply, " %s (%s) %s", region->name, parent->name, (region->flags & REGION_DENY_FLOOD) ? "" : "F");
+        } else {
+          sprintf(reply, " %s %s", region->name, (region->flags & REGION_DENY_FLOOD) ? "" : "F");
+        }
+      } else {
+        strcpy(reply, "Err - unknown region");
+      }
+    } else if (n >= 3 && strcmp(parts[1], "home") == 0) {
+      auto home = region_map.findByNamePrefix(parts[2]);
+      if (home) {
+        region_map.setHomeRegion(home);
+        sprintf(reply, " home is now %s", home->name);
+      } else {
+        strcpy(reply, "Err - unknown region");
+      }
+    } else if (n == 2 && strcmp(parts[1], "home") == 0) {
+      auto home = region_map.getHomeRegion();
+      sprintf(reply, " home is %s", home ? home->name : "*");
+    } else if (n >= 3 && strcmp(parts[1], "put") == 0) {
+      auto parent = n >= 4 ? region_map.findByNamePrefix(parts[3]) : &region_map.getWildcard();
+      if (parent == NULL) {
+        strcpy(reply, "Err - unknown parent");
+      } else {
+        auto region = region_map.putRegion(parts[2], parent->id);
+        if (region == NULL) {
+          strcpy(reply, "Err - unable to put");
+        } else {
+          strcpy(reply, "OK");
+        }
+      }
+    } else if (n >= 3 && strcmp(parts[1], "remove") == 0) {
+      auto region = region_map.findByName(parts[2]);
+      if (region) {
+        if (region_map.removeRegion(*region)) {
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Err - not empty");
+        }
+      } else {
+        strcpy(reply, "Err - not found");
+      }
+    } else if (n >= 3 && strcmp(parts[1], "list") == 0) {
+      uint8_t mask = 0;
+      bool invert = false;
+      
+      if (strcmp(parts[2], "allowed") == 0) {
+        mask = REGION_DENY_FLOOD;
+        invert = false;  // list regions that DON'T have DENY flag
+      } else if (strcmp(parts[2], "denied") == 0) {
+        mask = REGION_DENY_FLOOD;
+        invert = true;   // list regions that DO have DENY flag
+      } else {
+        strcpy(reply, "Err - use 'allowed' or 'denied'");
+        return;
+      }
+      
+      int len = region_map.exportNamesTo(reply, 160, mask, invert);
+      if (len == 0) {
+        strcpy(reply, "-none-");
+      }
+    } else {
+      strcpy(reply, "Err - ??");
+    }
+  } else if (memcmp(command, "ping.public", 11) == 0) {
+    const char* val = command + 11;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      snprintf(reply, 160, "ping.public=%u", (unsigned)_prefs.ping_public_max_replies);
+    } else if (strcmp(val, "on") == 0) {
+      _prefs.ping_public_max_replies = 3;
+      _prefs.ping_public_enabled = 1;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else if (strcmp(val, "off") == 0) {
+      _prefs.ping_public_max_replies = 0;
+      _prefs.ping_public_enabled = 0;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else if (val[0] >= '0' && val[0] <= '9') {
+      int count = atoi(val);
+      if (count < 0 || count > 3) {
+        strcpy(reply, "Err - 0..3");
+      } else {
+        _prefs.ping_public_max_replies = (uint8_t)count;
+        _prefs.ping_public_enabled = count > 0 ? 1 : 0;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
+    } else {
+      strcpy(reply, "Err - ??");
+    }
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
@@ -1262,6 +1995,10 @@ void MyMesh::loop() {
 #endif
 
   mesh::Mesh::loop();
+
+#if defined(ESP32)
+  pumpDiscordWebhook();
+#endif
 
   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
     mesh::Packet *pkt = createSelfAdvert();
@@ -1293,6 +2030,25 @@ void MyMesh::loop() {
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     acl.save(_fs);
     dirty_contacts_expiry = 0;
+  }
+
+  if (pending_ping_retries && next_ping_send_at && millisHasNowPassed(next_ping_send_at)) {
+    if (pending_ping_channel_ready) {
+      sendPingReply(pending_ping_channel, pending_ping_reply);
+    }
+    pending_ping_retries--;
+    if (pending_ping_retries) {
+      next_ping_send_at = futureMillis(PING_REPLY_RETRY_DELAY_MS);
+    } else {
+      next_ping_send_at = 0;
+    }
+  }
+
+  if (next_public_broadcast_at && millisHasNowPassed(next_public_broadcast_at)) {
+    if (test_channel_ready) {
+      sendPublicBroadcast(test_channel);
+    }
+    next_public_broadcast_at = futureMillis(TEST_BROADCAST_INTERVAL_MS);
   }
 
   // update uptime
