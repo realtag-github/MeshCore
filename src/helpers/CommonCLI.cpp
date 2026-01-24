@@ -80,8 +80,12 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->advert_loc_policy, sizeof (_prefs->advert_loc_policy));          // 161
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier)); // 166
-    file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
-    // 290
+    file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));          // 170
+    file.read((uint8_t *)&_prefs->wifi_ssid, sizeof(_prefs->wifi_ssid));           // 290
+    file.read((uint8_t *)&_prefs->wifi_pwd, sizeof(_prefs->wifi_pwd));             // 322
+    file.read((uint8_t *)&_prefs->discord_webhook_url, sizeof(_prefs->discord_webhook_url)); // 386
+    file.read((uint8_t *)&_prefs->ping_public_enabled, sizeof(_prefs->ping_public_enabled)); // 578
+    // 579
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -164,8 +168,12 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->advert_loc_policy, sizeof(_prefs->advert_loc_policy));           // 161
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
-    file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
-    // 290
+    file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));                          // 170
+    file.write((uint8_t *)&_prefs->wifi_ssid, sizeof(_prefs->wifi_ssid));                            // 290
+    file.write((uint8_t *)&_prefs->wifi_pwd, sizeof(_prefs->wifi_pwd));                              // 322
+    file.write((uint8_t *)&_prefs->discord_webhook_url, sizeof(_prefs->discord_webhook_url));        // 386
+    file.write((uint8_t *)&_prefs->ping_public_enabled, sizeof(_prefs->ping_public_enabled));        // 578
+    // 579
 
     file.close();
   }
