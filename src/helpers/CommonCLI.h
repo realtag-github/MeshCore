@@ -60,6 +60,17 @@ struct NodePrefs { // persisted to file
   uint8_t rx_boosted_gain; // power settings
   uint8_t path_hash_mode;   // which path mode to use when sending
   uint8_t loop_detect;
+  char wifi_ssid[32];
+  char wifi_pwd[64];
+  char discord_webhook_url[192];
+  uint8_t ping_public_enabled;
+  uint8_t ping_public_max_replies;
+  uint8_t ping_test_enabled;
+  uint8_t ping_test_max_replies;
+  uint8_t ping_simple_enabled;
+  uint8_t hourly_status_enabled;
+  uint8_t busy_delay_threshold;
+  uint16_t busy_delay_max_secs;
 };
 
 class CommonCLICallbacks {
@@ -87,6 +98,18 @@ public:
   virtual void saveIdentity(const mesh::LocalIdentity& new_id) = 0;
   virtual void clearStats() = 0;
   virtual void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) = 0;
+  virtual void triggerNodeDiscovery() {
+    // no op by default
+  };
+  virtual void setNodeDiscoveryEnabled(bool enable) {
+    // no op by default
+  };
+  virtual void setNodeDiscoveryInterval(uint16_t mins) {
+    (void)mins;
+  };
+  virtual void formatNodeDiscoveryStatus(char* reply) {
+    strcpy(reply, "ERR: not supported");
+  };
 
   virtual void setBridgeState(bool enable) {
     // no op by default
