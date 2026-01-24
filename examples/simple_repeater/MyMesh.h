@@ -68,7 +68,7 @@ struct NeighbourInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "30 Nov 2025"
+  #define FIRMWARE_BUILD_DATE   "16 Jan 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
@@ -88,6 +88,15 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NodePrefs _prefs;
   CommonCLI _cli;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
+  char pending_ping_reply[256];
+  uint8_t pending_ping_retries;
+  unsigned long next_ping_send_at;
+  unsigned long next_public_broadcast_at;
+  uint32_t last_busy_sample_ms;
+  uint32_t last_busy_tx_ms;
+  uint32_t last_busy_rx_ms;
+  mesh::GroupChannel pending_ping_channel;
+  bool pending_ping_channel_ready;
   ClientACL  acl;
   TransportKeyStore key_store;
   RegionMap region_map, temp_map;
@@ -106,6 +115,26 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t pending_sf;
   uint8_t pending_cr;
   int  matching_peer_indexes[MAX_CLIENTS];
+  mesh::GroupChannel public_channel;
+  bool public_channel_ready;
+  mesh::GroupChannel test_channel;
+  bool test_channel_ready;
+#if defined(ESP32)
+  static const uint8_t DISCORD_WEBHOOK_QUEUE_SIZE = 128;
+  unsigned long next_wifi_attempt_at;
+  unsigned long next_webhook_attempt_at;
+  uint8_t webhook_head;
+  uint8_t webhook_tail;
+  uint8_t webhook_count;
+  struct WebhookItem {
+    char sender[40];
+    char body[200];
+  };
+  WebhookItem webhook_queue[DISCORD_WEBHOOK_QUEUE_SIZE];
+  void initWifiClient();
+  void queueDiscordWebhook(const char* sender, const char* body);
+  void pumpDiscordWebhook();
+#endif
 #if defined(WITH_RS232_BRIDGE)
   RS232Bridge bridge;
 #elif defined(WITH_ESPNOW_BRIDGE)
@@ -116,6 +145,12 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
   int handleRequest(ClientInfo* sender, uint32_t sender_timestamp, uint8_t* payload, size_t payload_len);
   mesh::Packet* createSelfAdvert();
+  void initPublicChannel();
+  void initTestChannel();
+  void sendPingReply(const mesh::GroupChannel& channel, const char* reply_text);
+  void sendPublicBroadcast(const mesh::GroupChannel& channel);
+  uint8_t calcBusyPercent();
+  bool isPingChannel(const mesh::GroupChannel& channel) const;
 
   File openAppend(const char* fname);
 
@@ -156,9 +191,11 @@ protected:
 
   void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;
   int searchPeersByHash(const uint8_t* hash) override;
+  int searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) override;
   void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override;
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len);
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
+  void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onControlDataRecv(mesh::Packet* packet) override;
 

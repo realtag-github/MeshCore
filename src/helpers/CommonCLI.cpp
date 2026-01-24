@@ -71,7 +71,11 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->advert_loc_policy, sizeof (_prefs->advert_loc_policy));          // 161
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier)); // 166
-    // 170
+    file.read((uint8_t *)&_prefs->wifi_ssid, sizeof(_prefs->wifi_ssid)); // 170
+    file.read((uint8_t *)&_prefs->wifi_pwd, sizeof(_prefs->wifi_pwd)); // 202
+    file.read((uint8_t *)&_prefs->discord_webhook_url, sizeof(_prefs->discord_webhook_url)); // 266
+    file.read((uint8_t *)&_prefs->ping_public_enabled, sizeof(_prefs->ping_public_enabled)); // 458
+    // 459
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -151,7 +155,11 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->advert_loc_policy, sizeof(_prefs->advert_loc_policy));           // 161
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
-    // 170
+    file.write((uint8_t *)&_prefs->wifi_ssid, sizeof(_prefs->wifi_ssid));                            // 170
+    file.write((uint8_t *)&_prefs->wifi_pwd, sizeof(_prefs->wifi_pwd));                              // 202
+    file.write((uint8_t *)&_prefs->discord_webhook_url, sizeof(_prefs->discord_webhook_url));        // 266
+    file.write((uint8_t *)&_prefs->ping_public_enabled, sizeof(_prefs->ping_public_enabled));        // 458
+    // 459
 
     file.close();
   }
