@@ -29,7 +29,8 @@ On Heltec boards, the repeater LCD shows WiFi status:
 
 ## ⏱ Test Message
 
-The repeater does not send periodic test messages on its own. Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
+The repeater sends an hourly report message to the #test channel.
+Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
 
 ## About MeshCore
 
