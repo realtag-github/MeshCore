@@ -52,6 +52,10 @@ struct NodePrefs { // persisted to file
   uint32_t discovery_mod_timestamp;
   float adc_multiplier;
   char owner_info[120];
+  char wifi_ssid[32];
+  char wifi_pwd[64];
+  char discord_webhook_url[192];
+  uint8_t ping_public_enabled;
 };
 
 class CommonCLICallbacks {
