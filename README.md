@@ -1,3 +1,13 @@
+## HOW TO BUILD
+
+On Ubuntu or Debian try running
+
+chown +x build_heltec_v4_repeater.sh
+./build_heltec_v4_repeater.sh
+cd .pio/build/heltec_v4_repeater/
+
+and if all goes well it will build a binary inside .pio/build/heltec_v4_repeater/
+
 ## 🧰 Repeater CLI (WiFi/Webhook)
 
 These commands are available in the Simple Repeater serial console (and via remote admin).
