@@ -934,7 +934,7 @@ void MyMesh::sendPublicBroadcast(const mesh::GroupChannel& channel) {
   memcpy(temp, &timestamp, 4);
   temp[4] = 0;  // TXT_TYPE_PLAIN
 
-  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: North York NF %ddBm Busy %u%%",
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: NF %ddBm Busy %u%%",
            _prefs.node_name, noise_floor, busy_pct);
   size_t msg_len = strlen((char*)&temp[5]);
   if (msg_len > 134) {
