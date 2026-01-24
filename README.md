@@ -27,6 +27,10 @@ On Heltec boards, the repeater LCD shows WiFi status:
 - `WiFi:ERR` — SSID set but not connected.
 - `WiFi:OK <ip>` — connected and showing the IP address.
 
+## ⏱ Test Message
+
+The repeater does not send periodic test messages on its own. Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
