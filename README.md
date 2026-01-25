@@ -8,7 +8,7 @@ cd .pio/build/heltec_v4_repeater/
 
 and if all goes well it will build a binary inside .pio/build/heltec_v4_repeater/
 
-## 🧰 Repeater CLI (WiFi/Webhook)
+## Repeater CLI (WiFi/Webhook)
 
 These commands are available in the Simple Repeater serial console (and via remote admin).
 
@@ -29,7 +29,7 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `ping.public` — show whether public `!ping` replies are enabled.
 - `ping.public on|off` — enable/disable public `!ping` replies.
 
-## 📟 LCD (Heltec v3/v4)
+## LCD (Heltec v3/v4)
 
 On Heltec boards, the repeater LCD shows WiFi status:
 
@@ -37,6 +37,6 @@ On Heltec boards, the repeater LCD shows WiFi status:
 - `WiFi:ERR` — SSID set but not connected.
 - `WiFi:OK <ip>` — connected and showing the IP address.
 
-## ⏱ Test Message
+## Test Message
 
 The repeater sends an hourly report message to #test channel. 
