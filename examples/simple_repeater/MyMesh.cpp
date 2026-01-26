@@ -149,7 +149,7 @@ static void formatPathString(const uint8_t* path, uint8_t path_len, char* dest, 
 
   size_t used = 0;
   for (uint8_t i = 0; i < path_len; i++) {
-    const char* sep = (i == 0) ? "" : "→";
+    const char* sep = (i == 0) ? "" : ">";
     int written = snprintf(dest + used, dest_len - used, "%s%02X", sep, path[i]);
     if (written < 0 || (size_t)written >= dest_len - used) {
       dest[dest_len - 1] = 0;
@@ -1167,9 +1167,11 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
     if (any_body) {
       char path_str[384];
       formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
-      char combined[200];
-      snprintf(combined, sizeof(combined), "[From: \"Public Channel\" Hops: %s] %s", path_str, any_body);
-      queueDiscordWebhook(any_sender[0] ? any_sender : "Unknown", combined);
+      char body_with_hops[320];
+      snprintf(body_with_hops, sizeof(body_with_hops),
+               "%s [From: \"Public Channel\" Hops: %s]",
+               any_body, path_str);
+      queueDiscordWebhook("cedarmesh.ca", body_with_hops);
     }
   }
 #endif
