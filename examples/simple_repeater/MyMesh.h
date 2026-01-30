@@ -163,6 +163,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void initPublicChannel();
   void initTestChannel();
   void sendPingReply(const mesh::GroupChannel& channel, const char* reply_text);
+  void sendStatusReply(const mesh::GroupChannel& channel, const char* reply_text);
   void sendPublicBroadcast(const mesh::GroupChannel& channel);
   uint8_t calcBusyPercent();
   bool isPingChannel(const mesh::GroupChannel& channel) const;

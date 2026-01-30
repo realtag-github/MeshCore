@@ -125,6 +125,8 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
+    _prefs->ping_public_enabled = constrain(_prefs->ping_public_enabled, 0, 1);
+    _prefs->ping_test_enabled = constrain(_prefs->ping_test_enabled, 0, 1);
 
     // sanitise settings
     _prefs->rx_boosted_gain = constrain(_prefs->rx_boosted_gain, 0, 1); // boolean
@@ -200,6 +202,9 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->ping_test_max_replies, sizeof(_prefs->ping_test_max_replies));    // 585
     file.write((uint8_t *)&_prefs->ping_simple_enabled, sizeof(_prefs->ping_simple_enabled));        // 586
     // 587
+=======
+    // 580
+>>>>>>> b79a7b44 (Changes made)
 
     file.close();
   }

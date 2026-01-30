@@ -950,17 +950,40 @@ bool MyMesh::isPingChannel(const mesh::GroupChannel& channel) const {
 void MyMesh::sendPingReply(const mesh::GroupChannel& channel, const char* reply_text) {
   if (!public_channel_ready && !test_channel_ready) return;
 
-  int attempt = PING_REPLY_ATTEMPTS - pending_ping_retries + 1;
+  uint8_t total = pending_ping_total ? pending_ping_total : PING_REPLY_ATTEMPTS;
+  int attempt = total - pending_ping_retries + 1;
   if (attempt < 1) attempt = 1;
-  if (attempt > PING_REPLY_ATTEMPTS) attempt = PING_REPLY_ATTEMPTS;
+  if (attempt > total) attempt = total;
 
   uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
   uint8_t temp[MAX_PACKET_PAYLOAD];
   memcpy(temp, &timestamp, 4);
   temp[4] = 0;  // TXT_TYPE_PLAIN
 
-  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
-           _prefs.node_name, reply_text, attempt, PING_REPLY_ATTEMPTS);
+  if (pending_ping_include_prefix) {
+    snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
+             _prefs.node_name, reply_text, attempt, total);
+  } else {
+    snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s [%d/%d]",
+             reply_text, attempt, total);
+  }
+  size_t msg_len = strlen((char*)&temp[5]);
+
+  auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
+  if (reply) {
+    sendFlood(reply, SERVER_RESPONSE_DELAY);
+  }
+}
+
+void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* reply_text) {
+  if (!public_channel_ready && !test_channel_ready) return;
+
+  uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+  uint8_t temp[MAX_PACKET_PAYLOAD];
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s", reply_text);
   size_t msg_len = strlen((char*)&temp[5]);
 
   auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
@@ -972,7 +995,7 @@ void MyMesh::sendPingReply(const mesh::GroupChannel& channel, const char* reply_
 void MyMesh::sendPublicBroadcast(const mesh::GroupChannel& channel) {
   if (!test_channel_ready && !public_channel_ready) return;
 
-  uint32_t timestamp = millis() / 1000;
+  uint32_t timestamp = getRTCClock()->getCurrentTime();
   int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
   uint8_t busy_pct = calcBusyPercent();
   uint8_t temp[MAX_PACKET_PAYLOAD];
@@ -1171,7 +1194,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
       snprintf(body_with_hops, sizeof(body_with_hops),
                "%s [From: \"Public Channel\" Hops: %s]",
                any_body, path_str);
-      queueDiscordWebhook("cedarmesh.ca", body_with_hops);
+      queueDiscordWebhook(any_sender[0] ? any_sender : "Unknown", body_with_hops);
     }
   }
 #endif
@@ -1179,8 +1202,10 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   if (!body) return;
   if (!isPingChannel(channel)) return;
   bool is_ping = containsSubstringCaseInsensitive(body, "!ping");
-  bool is_test = containsSubstringCaseInsensitive(body, "test");
-  if (!is_ping && !is_test) return;
+  bool is_5count = containsSubstringCaseInsensitive(body, "!5count");
+  bool is_status = containsSubstringCaseInsensitive(body, "!status");
+  bool is_test = _prefs.ping_test_enabled && containsSubstringCaseInsensitive(body, "test");
+  if (!is_ping && !is_5count && !is_status && !is_test) return;
 
   char path_str[384];
   formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
@@ -1191,14 +1216,29 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   }
   int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
   uint8_t busy_pct = calcBusyPercent();
-  snprintf(reply_text, sizeof(reply_text),
-           "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%%",
-           sender_name, path_str, noise_floor, busy_pct);
+  if (is_status) {
+    snprintf(reply_text, sizeof(reply_text),
+             "@[%s] %s: NF %ddBm Busy %u%%",
+             sender_name, _prefs.node_name, noise_floor, busy_pct);
+    sendStatusReply(channel, reply_text);
+    return;
+  }
+  if (is_5count) {
+    snprintf(reply_text, sizeof(reply_text),
+             "@[%s]. Path: %s. NF %ddBm Busy %u%%",
+             sender_name, path_str, noise_floor, busy_pct);
+  } else {
+    snprintf(reply_text, sizeof(reply_text),
+             "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%%",
+             sender_name, path_str, noise_floor, busy_pct);
+  }
 
   StrHelper::strncpy(pending_ping_reply, reply_text, sizeof(pending_ping_reply));
   pending_ping_channel = channel;
   pending_ping_channel_ready = true;
-  pending_ping_retries = PING_REPLY_ATTEMPTS;
+  pending_ping_total = is_5count ? 5 : PING_REPLY_ATTEMPTS;
+  pending_ping_retries = pending_ping_total;
+  pending_ping_include_prefix = !is_5count;
   next_ping_send_at = 0;
 
   if (pending_ping_retries > 0) {
@@ -1329,6 +1369,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   region_load_active = false;
   pending_ping_reply[0] = 0;
   pending_ping_retries = 0;
+  pending_ping_total = PING_REPLY_ATTEMPTS;
+  pending_ping_include_prefix = true;
   next_ping_send_at = 0;
   next_public_broadcast_at = 0;
   last_busy_sample_ms = 0;
@@ -1908,6 +1950,22 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
         savePrefs();
         strcpy(reply, "OK");
       }
+    } else {
+      strcpy(reply, "Err - ??");
+    }
+  } else if (memcmp(command, "ping.test", 9) == 0) {
+    const char* val = command + 9;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      strcpy(reply, _prefs.ping_test_enabled ? "ping.test=on" : "ping.test=off");
+    } else if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) {
+      _prefs.ping_test_enabled = 1;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) {
+      _prefs.ping_test_enabled = 0;
+      savePrefs();
+      strcpy(reply, "OK");
     } else {
       strcpy(reply, "Err - ??");
     }
