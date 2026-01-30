@@ -31,7 +31,7 @@ On Heltec boards, the repeater LCD shows WiFi status:
 
 ## ⏱ Status Broadcast
 
-The repeater reports to the `#test` channel every hour. It only replies to `!ping` unless `ping.test` is enabled. Group commands:
+The repeater reports to the `#test` channel on the hour (:00) and once on boot. It only replies to `!ping` unless `ping.test` is enabled. Group commands:
 
 - `!ping` — reply with path and RF stats.
 - `!5count` — reply 5 times with the same info as `!ping` (no "Pong").
