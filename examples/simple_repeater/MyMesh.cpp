@@ -114,6 +114,14 @@ static size_t jsonEscape(const char* src, char* dst, size_t dst_len) {
 }
 #endif
 
+static unsigned long calcNextHourDelayMs(mesh::RTCClock* rtc) {
+  uint32_t now = rtc->getCurrentTime();
+  uint32_t next_hour = (now / 3600UL + 1) * 3600UL;
+  uint32_t delta_secs = next_hour - now;
+  if (delta_secs == 0) delta_secs = 3600UL;
+  return (unsigned long)delta_secs * 1000UL;
+}
+
 uint8_t MyMesh::calcBusyPercent() {
   uint32_t now_ms = millis();
   uint32_t tx_ms = getTotalAirTime();
@@ -1907,7 +1915,7 @@ void MyMesh::loop() {
     if (test_channel_ready) {
       sendPublicBroadcast(test_channel);
     }
-    next_public_broadcast_at = futureMillis(TEST_BROADCAST_INTERVAL_MS);
+    next_public_broadcast_at = futureMillis(calcNextHourDelayMs(getRTCClock()));
   }
 
   // update uptime
