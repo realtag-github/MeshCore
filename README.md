@@ -18,6 +18,8 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `wifi.connect` — force a reconnect using saved credentials.
 - `ping.public` — show whether public `!ping` replies are enabled.
 - `ping.public on|off` — enable/disable public `!ping` replies.
+- `ping.test` — show whether "test" triggers are enabled (default off).
+- `ping.test on|off` — enable/disable "test" triggers.
 
 ## 📟 LCD (Heltec v3/v4)
 
@@ -27,9 +29,14 @@ On Heltec boards, the repeater LCD shows WiFi status:
 - `WiFi:ERR` — SSID set but not connected.
 - `WiFi:OK <ip>` — connected and showing the IP address.
 
-## ⏱ Test Message
+## ⏱ Status Broadcast
 
-The repeater reports to the `#test` channel every hour.
+The repeater reports to the `#test` channel every hour. It only replies to `!ping` unless `ping.test` is enabled. Group commands:
+
+- `!ping` — reply with path and RF stats.
+- `!5count` — reply 5 times with the same info as `!ping` (no "Pong").
+- `!status` — reply with the hourly report info and tag the sender.
+
 Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
 
 ## About MeshCore
