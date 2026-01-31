@@ -127,6 +127,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
     _prefs->ping_public_enabled = constrain(_prefs->ping_public_enabled, 0, 1);
     _prefs->ping_test_enabled = constrain(_prefs->ping_test_enabled, 0, 1);
+    _prefs->hourly_status_enabled = constrain(_prefs->hourly_status_enabled, 0, 1);
 
     // sanitise settings
     _prefs->rx_boosted_gain = constrain(_prefs->rx_boosted_gain, 0, 1); // boolean
@@ -205,6 +206,9 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
 =======
     // 580
 >>>>>>> b79a7b44 (Changes made)
+=======
+    // 581
+>>>>>>> a86e4b9b (Add status report toggle and bump repeater version)
 
     file.close();
   }

@@ -1246,7 +1246,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   pending_ping_channel_ready = true;
   pending_ping_total = is_5count ? 5 : PING_REPLY_ATTEMPTS;
   pending_ping_retries = pending_ping_total;
-  pending_ping_include_prefix = !is_5count;
+  pending_ping_include_prefix = true;
   next_ping_send_at = 0;
 
   if (pending_ping_retries > 0) {
@@ -1495,7 +1495,7 @@ void MyMesh::begin(FILESYSTEM *fs) {
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
-  next_public_broadcast_at = futureMillis(5000);
+  next_public_broadcast_at = _prefs.hourly_status_enabled ? futureMillis(5000) : 0;
 
   board.setAdcMultiplier(_prefs.adc_multiplier);
 
@@ -1977,6 +1977,26 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     } else {
       strcpy(reply, "Err - ??");
     }
+  } else if (memcmp(command, "status.report", 13) == 0) {
+    const char* val = command + 13;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      strcpy(reply, _prefs.hourly_status_enabled ? "status.report=on" : "status.report=off");
+    } else if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) {
+      _prefs.hourly_status_enabled = 1;
+      savePrefs();
+      if (next_public_broadcast_at == 0) {
+        next_public_broadcast_at = futureMillis(calcNextHourDelayMs(getRTCClock()));
+      }
+      strcpy(reply, "OK");
+    } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) {
+      _prefs.hourly_status_enabled = 0;
+      savePrefs();
+      next_public_broadcast_at = 0;
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Err - ??");
+    }
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
@@ -2038,10 +2058,10 @@ void MyMesh::loop() {
   }
 
   if (next_public_broadcast_at && millisHasNowPassed(next_public_broadcast_at)) {
-    if (test_channel_ready) {
+    if (_prefs.hourly_status_enabled && test_channel_ready) {
       sendPublicBroadcast(test_channel);
     }
-    next_public_broadcast_at = futureMillis(calcNextHourDelayMs(getRTCClock()));
+    next_public_broadcast_at = _prefs.hourly_status_enabled ? futureMillis(calcNextHourDelayMs(getRTCClock())) : 0;
   }
 
   // update uptime
