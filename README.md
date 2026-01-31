@@ -20,6 +20,8 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `ping.public on|off` — enable/disable public `!ping` replies.
 - `ping.test` — show whether "test" triggers are enabled (default off).
 - `ping.test on|off` — enable/disable "test" triggers.
+- `status.report` — show whether the hourly status report is enabled.
+- `status.report on|off` — enable/disable the hourly status report.
 
 ## 📟 LCD (Heltec v3/v4)
 
@@ -31,7 +33,7 @@ On Heltec boards, the repeater LCD shows WiFi status:
 
 ## ⏱ Status Broadcast
 
-The repeater reports to the `#test` channel on the hour (:00) and once on boot. It only replies to `!ping` unless `ping.test` is enabled. Group commands:
+The repeater reports to the `#test` channel on the hour (:00) and once on boot (toggle with `status.report`). It only replies to `!ping` unless `ping.test` is enabled. Group commands:
 
 - `!ping` — reply with path and RF stats.
 - `!5count` — reply 5 times with the same info as `!ping` (no "Pong").
