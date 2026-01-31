@@ -57,6 +57,7 @@ struct NodePrefs { // persisted to file
   char discord_webhook_url[192];
   uint8_t ping_public_enabled;
   uint8_t ping_test_enabled;
+  uint8_t hourly_status_enabled;
 };
 
 class CommonCLICallbacks {
