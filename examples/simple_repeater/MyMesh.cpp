@@ -1178,22 +1178,23 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
     StrHelper::strncpy(sender_name, "Unknown", sizeof(sender_name));
   }
   int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+  int16_t last_rssi = (int16_t)_radio->getLastRSSI();
   uint8_t busy_pct = calcBusyPercent();
   if (is_status) {
     snprintf(reply_text, sizeof(reply_text),
-             "@[%s] %s: NF %ddBm Busy %u%%",
-             sender_name, _prefs.node_name, noise_floor, busy_pct);
+             "%s: NF %ddBm Busy %u%% RSSI %ddBm @[%s]",
+             _prefs.node_name, noise_floor, busy_pct, last_rssi, sender_name);
     sendStatusReply(channel, reply_text);
     return;
   }
   if (is_5count) {
     snprintf(reply_text, sizeof(reply_text),
-             "@[%s]. Path: %s. NF %ddBm Busy %u%%",
-             sender_name, path_str, noise_floor, busy_pct);
+             "@[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
+             sender_name, path_str, noise_floor, busy_pct, last_rssi);
   } else {
     snprintf(reply_text, sizeof(reply_text),
-             "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%%",
-             sender_name, path_str, noise_floor, busy_pct);
+             "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
+             sender_name, path_str, noise_floor, busy_pct, last_rssi);
   }
 
   StrHelper::strncpy(pending_ping_reply, reply_text, sizeof(pending_ping_reply));
