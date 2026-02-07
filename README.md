@@ -8,6 +8,8 @@ These commands are available in the Simple Repeater serial console (and via remo
   - `wifi.webhook https://discord.com/api/webhooks/...`
   - `wifi.webhook test`
   - `ping.public off`
+  - `busy.delay.threshold 80`
+  - `busy.delay.max 180`
 
 - `wifi.status` — show WiFi state (off/err/ok + IP).
 - `wifi.ssid <ssid>` — set SSID and save to prefs.
@@ -22,6 +24,10 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `ping.test on|off` — enable/disable "test" triggers.
 - `status.report` — show whether the hourly status report is enabled.
 - `status.report on|off` — enable/disable the hourly status report.
+- `busy.delay.threshold` — show the busy% threshold for delaying `!` replies (default 20%).
+- `busy.delay.threshold <0-100>` — set the busy% threshold for delaying `!` replies.
+- `busy.delay.max` — show the maximum delay applied to `!` replies.
+- `busy.delay.max <seconds>` — set the maximum delay (0-3600s) applied to `!` replies.
 
 ## 📟 LCD (Heltec v3/v4)
 
