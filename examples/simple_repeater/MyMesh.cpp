@@ -146,6 +146,27 @@ uint8_t MyMesh::calcBusyPercent() {
   return (uint8_t)busy;
 }
 
+static void appendDelaySuffix(char* dest, size_t dest_len, uint32_t delay_ms) {
+  if (!dest || dest_len == 0 || delay_ms == 0) return;
+  size_t used = strlen(dest);
+  if (used >= dest_len - 1) return;
+  unsigned long delay_secs = (delay_ms + 999UL) / 1000UL;
+  snprintf(dest + used, dest_len - used, " Delay: +%lus", delay_secs);
+}
+
+uint32_t MyMesh::calcBusyDelayMs(uint8_t busy_pct) {
+  if (_prefs.busy_delay_max_secs == 0) return 0;
+  if (_prefs.busy_delay_threshold >= 100) return 0;
+  if (busy_pct <= _prefs.busy_delay_threshold) return 0;
+
+  uint32_t max_ms = (uint32_t)_prefs.busy_delay_max_secs * 1000UL;
+  uint32_t denom = 100U - _prefs.busy_delay_threshold;
+  uint32_t numerator = (uint32_t)(busy_pct - _prefs.busy_delay_threshold);
+  uint32_t delay = (numerator * numerator * max_ms) / (denom * denom);
+  if (delay > max_ms) delay = max_ms;
+  return delay;
+}
+
 static void formatPathString(const uint8_t* path, uint8_t path_len, char* dest, size_t dest_len) {
   if (dest_len == 0) return;
   dest[0] = 0;
@@ -910,13 +931,32 @@ bool MyMesh::isPingChannel(const mesh::GroupChannel& channel) const {
   return false;
 }
 
-void MyMesh::sendPingReply(const mesh::GroupChannel& channel, const char* reply_text) {
+void MyMesh::sendPingReply(const mesh::GroupChannel& channel) {
   if (!public_channel_ready && !test_channel_ready) return;
 
   uint8_t total = pending_ping_total ? pending_ping_total : PING_REPLY_ATTEMPTS;
   int attempt = total - pending_ping_retries + 1;
   if (attempt < 1) attempt = 1;
   if (attempt > total) attempt = total;
+
+  uint8_t busy_pct = calcBusyPercent();
+  uint32_t delay_ms = calcBusyDelayMs(busy_pct);
+  int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+  int16_t last_rssi = (int16_t)_radio->getLastRSSI();
+  char reply_text[256];
+  if (pending_ping_is_5count) {
+    snprintf(reply_text, sizeof(reply_text),
+             "@[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
+             pending_ping_sender, pending_ping_path, noise_floor, busy_pct, last_rssi);
+  } else {
+    snprintf(reply_text, sizeof(reply_text),
+             "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
+             pending_ping_sender, pending_ping_path, noise_floor, busy_pct, last_rssi);
+  }
+
+  char reply_with_delay[256];
+  StrHelper::strncpy(reply_with_delay, reply_text, sizeof(reply_with_delay));
+  appendDelaySuffix(reply_with_delay, sizeof(reply_with_delay), delay_ms);
 
   uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
   uint8_t temp[MAX_PACKET_PAYLOAD];
@@ -925,33 +965,43 @@ void MyMesh::sendPingReply(const mesh::GroupChannel& channel, const char* reply_
 
   if (pending_ping_include_prefix) {
     snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
-             _prefs.node_name, reply_text, attempt, total);
+             _prefs.node_name, reply_with_delay, attempt, total);
   } else {
     snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s [%d/%d]",
-             reply_text, attempt, total);
+             reply_with_delay, attempt, total);
   }
   size_t msg_len = strlen((char*)&temp[5]);
 
   auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
   if (reply) {
-    sendFlood(reply, SERVER_RESPONSE_DELAY);
+    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms);
   }
 }
 
-void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* reply_text) {
+void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name) {
   if (!public_channel_ready && !test_channel_ready) return;
+
+  uint8_t busy_pct = calcBusyPercent();
+  uint32_t delay_ms = calcBusyDelayMs(busy_pct);
+  int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
+  int16_t last_rssi = (int16_t)_radio->getLastRSSI();
+  char reply_with_delay[256];
+  snprintf(reply_with_delay, sizeof(reply_with_delay),
+           "%s: NF %ddBm Busy %u%% RSSI %ddBm @[%s]",
+           _prefs.node_name, noise_floor, busy_pct, last_rssi, sender_name);
+  appendDelaySuffix(reply_with_delay, sizeof(reply_with_delay), delay_ms);
 
   uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
   uint8_t temp[MAX_PACKET_PAYLOAD];
   memcpy(temp, &timestamp, 4);
   temp[4] = 0;  // TXT_TYPE_PLAIN
 
-  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s", reply_text);
+  snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s", reply_with_delay);
   size_t msg_len = strlen((char*)&temp[5]);
 
   auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
   if (reply) {
-    sendFlood(reply, SERVER_RESPONSE_DELAY);
+    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms);
   }
 }
 
@@ -1173,31 +1223,17 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   char path_str[384];
   formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
 
-  char reply_text[256];
   if (sender_name[0] == 0) {
     StrHelper::strncpy(sender_name, "Unknown", sizeof(sender_name));
   }
-  int16_t noise_floor = (int16_t)_radio->getNoiseFloor();
-  int16_t last_rssi = (int16_t)_radio->getLastRSSI();
-  uint8_t busy_pct = calcBusyPercent();
   if (is_status) {
-    snprintf(reply_text, sizeof(reply_text),
-             "%s: NF %ddBm Busy %u%% RSSI %ddBm @[%s]",
-             _prefs.node_name, noise_floor, busy_pct, last_rssi, sender_name);
-    sendStatusReply(channel, reply_text);
+    sendStatusReply(channel, sender_name);
     return;
   }
-  if (is_5count) {
-    snprintf(reply_text, sizeof(reply_text),
-             "@[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
-             sender_name, path_str, noise_floor, busy_pct, last_rssi);
-  } else {
-    snprintf(reply_text, sizeof(reply_text),
-             "Pong, @[%s]. Path: %s. NF %ddBm Busy %u%% RSSI %ddBm",
-             sender_name, path_str, noise_floor, busy_pct, last_rssi);
-  }
 
-  StrHelper::strncpy(pending_ping_reply, reply_text, sizeof(pending_ping_reply));
+  StrHelper::strncpy(pending_ping_sender, sender_name, sizeof(pending_ping_sender));
+  StrHelper::strncpy(pending_ping_path, path_str, sizeof(pending_ping_path));
+  pending_ping_is_5count = is_5count;
   pending_ping_channel = channel;
   pending_ping_channel_ready = true;
   pending_ping_total = is_5count ? 5 : PING_REPLY_ATTEMPTS;
@@ -1206,7 +1242,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   next_ping_send_at = 0;
 
   if (pending_ping_retries > 0) {
-    sendPingReply(pending_ping_channel, pending_ping_reply);
+    sendPingReply(pending_ping_channel);
     pending_ping_retries--;
     if (pending_ping_retries > 0) {
       next_ping_send_at = futureMillis(PING_REPLY_RETRY_DELAY_MS);
@@ -1289,10 +1325,12 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   public_channel_ready = false;
   test_channel_ready = false;
   region_load_active = false;
-  pending_ping_reply[0] = 0;
+  pending_ping_sender[0] = 0;
+  pending_ping_path[0] = 0;
   pending_ping_retries = 0;
   pending_ping_total = PING_REPLY_ATTEMPTS;
   pending_ping_include_prefix = true;
+  pending_ping_is_5count = false;
   next_ping_send_at = 0;
   next_public_broadcast_at = 0;
   last_busy_sample_ms = 0;
@@ -1353,6 +1391,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.ping_public_enabled = 0;
   _prefs.ping_test_enabled = 0;
   _prefs.hourly_status_enabled = 1;
+  _prefs.busy_delay_threshold = 20;
+  _prefs.busy_delay_max_secs = 120;
 #ifdef WIFI_SSID
   StrHelper::strncpy(_prefs.wifi_ssid, WIFI_SSID, sizeof(_prefs.wifi_ssid));
 #endif
@@ -1854,6 +1894,36 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     } else {
       strcpy(reply, "Err - ??");
     }
+  } else if (memcmp(command, "busy.delay.threshold", 20) == 0) {
+    const char* val = command + 20;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      snprintf(reply, 160, "busy.delay.threshold=%u", (unsigned)_prefs.busy_delay_threshold);
+    } else {
+      int threshold = atoi(val);
+      if (threshold < 0 || threshold > 100) {
+        strcpy(reply, "Err - 0..100");
+      } else {
+        _prefs.busy_delay_threshold = (uint8_t)threshold;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
+    }
+  } else if (memcmp(command, "busy.delay.max", 14) == 0) {
+    const char* val = command + 14;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      snprintf(reply, 160, "busy.delay.max=%us", (unsigned)_prefs.busy_delay_max_secs);
+    } else {
+      int max_secs = atoi(val);
+      if (max_secs < 0 || max_secs > 3600) {
+        strcpy(reply, "Err - 0..3600");
+      } else {
+        _prefs.busy_delay_max_secs = (uint16_t)max_secs;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
+    }
   } else if (memcmp(command, "status.report", 13) == 0) {
     const char* val = command + 13;
     while (*val == ' ') val++;
@@ -1923,7 +1993,7 @@ void MyMesh::loop() {
 
   if (pending_ping_retries && next_ping_send_at && millisHasNowPassed(next_ping_send_at)) {
     if (pending_ping_channel_ready) {
-      sendPingReply(pending_ping_channel, pending_ping_reply);
+      sendPingReply(pending_ping_channel);
     }
     pending_ping_retries--;
     if (pending_ping_retries) {

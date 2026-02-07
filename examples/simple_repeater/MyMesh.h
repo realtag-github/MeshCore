@@ -73,7 +73,7 @@ struct NeighbourInfo {
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION_BASE   "v1.12.2"
+  #define FIRMWARE_VERSION_BASE   "v1.12.3"
   #ifdef GIT_HASH
     #define FIRMWARE_VERSION      FIRMWARE_VERSION_BASE "-" GIT_HASH
   #else
@@ -97,10 +97,12 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   uint8_t reply_path[MAX_PATH_SIZE];
   int8_t  reply_path_len;
-  char pending_ping_reply[256];
+  char pending_ping_sender[40];
+  char pending_ping_path[384];
   uint8_t pending_ping_retries;
   uint8_t pending_ping_total;
   bool pending_ping_include_prefix;
+  bool pending_ping_is_5count;
   unsigned long next_ping_send_at;
   unsigned long next_public_broadcast_at;
   uint32_t last_busy_sample_ms;
@@ -160,10 +162,11 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   mesh::Packet* createSelfAdvert();
   void initPublicChannel();
   void initTestChannel();
-  void sendPingReply(const mesh::GroupChannel& channel, const char* reply_text);
-  void sendStatusReply(const mesh::GroupChannel& channel, const char* reply_text);
+  void sendPingReply(const mesh::GroupChannel& channel);
+  void sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name);
   void sendPublicBroadcast(const mesh::GroupChannel& channel);
   uint8_t calcBusyPercent();
+  uint32_t calcBusyDelayMs(uint8_t busy_pct);
   bool isPingChannel(const mesh::GroupChannel& channel) const;
 
   File openAppend(const char* fname);

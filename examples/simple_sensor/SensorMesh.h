@@ -37,7 +37,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION_BASE   "v1.12.0"
+  #define FIRMWARE_VERSION_BASE   "v1.12.3"
   #ifdef GIT_HASH
     #define FIRMWARE_VERSION      FIRMWARE_VERSION_BASE "-" GIT_HASH
   #else
