@@ -162,10 +162,11 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   mesh::Packet* createSelfAdvert();
   void initPublicChannel();
   void initTestChannel();
-  void sendPingReply(const mesh::GroupChannel& channel, const char* reply_text);
-  void sendStatusReply(const mesh::GroupChannel& channel, const char* reply_text);
+  void sendPingReply(const mesh::GroupChannel& channel);
+  void sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name);
   void sendPublicBroadcast(const mesh::GroupChannel& channel);
   uint8_t calcBusyPercent();
+  uint32_t calcBusyDelayMs(uint8_t busy_pct);
   bool isPingChannel(const mesh::GroupChannel& channel) const;
 
   File openAppend(const char* fname);
