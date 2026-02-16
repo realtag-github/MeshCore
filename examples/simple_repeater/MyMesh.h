@@ -85,6 +85,9 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint32_t last_millis;
   uint64_t uptime_millis;
   unsigned long next_local_advert, next_flood_advert;
+  unsigned long next_discover;
+  bool node_discover_enabled;
+  uint16_t node_discover_interval_mins;
   bool _logging;
   NodePrefs _prefs;
   ClientACL  acl;
@@ -235,6 +238,10 @@ public:
   }
 
   void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) override;
+  void triggerNodeDiscovery() override;
+  void setNodeDiscoveryEnabled(bool enable) override;
+  void setNodeDiscoveryInterval(uint16_t mins) override;
+  void formatNodeDiscoveryStatus(char* reply) override;
   bool formatFileSystem() override;
   void sendSelfAdvertisement(int delay_millis, bool flood) override;
   void updateAdvertTimer() override;
