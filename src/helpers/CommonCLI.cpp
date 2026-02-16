@@ -650,7 +650,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       bool s = _callbacks->formatFileSystem();
       sprintf(reply, "File system erase: %s", s ? "OK" : "Err");
     } else if (memcmp(command, "ver", 3) == 0) {
-      sprintf(reply, "%s (Build: %s)", _callbacks->getFirmwareVer(), _callbacks->getBuildDate());
+#ifdef GIT_HASH
+      sprintf(reply, "%s (Build: %s, Commit: %s)", _callbacks->getFirmwareVer(), _callbacks->getBuildDate(), GIT_HASH);
+#else
+      sprintf(reply, "%s (Build: %s, Commit: unknown)", _callbacks->getFirmwareVer(), _callbacks->getBuildDate());
+#endif
     } else if (memcmp(command, "board", 5) == 0) {
       sprintf(reply, "%s", _board->getManufacturerName());
     } else if (memcmp(command, "sensor get ", 11) == 0) {
