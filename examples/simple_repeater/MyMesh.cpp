@@ -1215,10 +1215,14 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   if (!body) return;
   if (!isPingChannel(channel)) return;
   bool is_ping = containsSubstringCaseInsensitive(body, "!ping");
-  bool is_5count = containsSubstringCaseInsensitive(body, "!5count");
   bool is_status = containsSubstringCaseInsensitive(body, "!status");
   bool is_test = _prefs.ping_test_enabled && containsSubstringCaseInsensitive(body, "test");
-  if (!is_ping && !is_5count && !is_status && !is_test) return;
+  if (!is_ping && !is_status && !is_test) return;
+
+  bool is_public_channel = public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0;
+  bool is_test_channel = test_channel_ready && memcmp(channel.hash, test_channel.hash, PATH_HASH_SIZE) == 0;
+  uint8_t max_replies = is_public_channel ? _prefs.ping_public_max_replies : _prefs.ping_test_max_replies;
+  if (max_replies == 0 && is_ping) return;
 
   char path_str[384];
   formatPathString(packet->path, packet->path_len, path_str, sizeof(path_str));
@@ -1233,10 +1237,10 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
 
   StrHelper::strncpy(pending_ping_sender, sender_name, sizeof(pending_ping_sender));
   StrHelper::strncpy(pending_ping_path, path_str, sizeof(pending_ping_path));
-  pending_ping_is_5count = is_5count;
+  pending_ping_is_5count = false;
   pending_ping_channel = channel;
   pending_ping_channel_ready = true;
-  pending_ping_total = is_5count ? 5 : PING_REPLY_ATTEMPTS;
+  pending_ping_total = (uint8_t)min(3, (int)max_replies);
   pending_ping_retries = pending_ping_total;
   pending_ping_include_prefix = true;
   next_ping_send_at = 0;
@@ -1389,7 +1393,9 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.wifi_pwd[0] = 0;
   _prefs.discord_webhook_url[0] = 0;
   _prefs.ping_public_enabled = 0;
+  _prefs.ping_public_max_replies = 0;
   _prefs.ping_test_enabled = 0;
+  _prefs.ping_test_max_replies = 3;
   _prefs.hourly_status_enabled = 1;
   _prefs.busy_delay_threshold = 20;
   _prefs.busy_delay_max_secs = 120;
@@ -1409,6 +1415,14 @@ void MyMesh::begin(FILESYSTEM *fs) {
   _fs = fs;
   // load persisted prefs
   _cli.loadPrefs(_fs);
+  if (_prefs.ping_public_max_replies == 0 && _prefs.ping_public_enabled) {
+    _prefs.ping_public_max_replies = 3;
+  }
+  _prefs.ping_public_enabled = _prefs.ping_public_max_replies > 0 ? 1 : 0;
+  if (_prefs.ping_test_max_replies == 0 && _prefs.ping_test_enabled) {
+    _prefs.ping_test_max_replies = 3;
+  }
+  _prefs.ping_test_enabled = _prefs.ping_test_max_replies > 0 ? 1 : 0;
   acl.load(_fs, self_id);
   // TODO: key_store.begin();
   region_map.load(_fs);
@@ -1866,15 +1880,27 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     const char* val = command + 11;
     while (*val == ' ') val++;
     if (*val == 0) {
-      strcpy(reply, _prefs.ping_public_enabled ? "ping.public=on" : "ping.public=off");
-    } else if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) {
+      snprintf(reply, 160, "ping.public=%u", (unsigned)_prefs.ping_public_max_replies);
+    } else if (strcmp(val, "on") == 0) {
+      _prefs.ping_public_max_replies = 3;
       _prefs.ping_public_enabled = 1;
       savePrefs();
       strcpy(reply, "OK");
-    } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) {
+    } else if (strcmp(val, "off") == 0) {
+      _prefs.ping_public_max_replies = 0;
       _prefs.ping_public_enabled = 0;
       savePrefs();
       strcpy(reply, "OK");
+    } else if (val[0] >= '0' && val[0] <= '9') {
+      int count = atoi(val);
+      if (count < 0 || count > 3) {
+        strcpy(reply, "Err - 0..3");
+      } else {
+        _prefs.ping_public_max_replies = (uint8_t)count;
+        _prefs.ping_public_enabled = count > 0 ? 1 : 0;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
     } else {
       strcpy(reply, "Err - ??");
     }
@@ -1882,15 +1908,27 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     const char* val = command + 9;
     while (*val == ' ') val++;
     if (*val == 0) {
-      strcpy(reply, _prefs.ping_test_enabled ? "ping.test=on" : "ping.test=off");
-    } else if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) {
+      snprintf(reply, 160, "ping.test=%u", (unsigned)_prefs.ping_test_max_replies);
+    } else if (strcmp(val, "on") == 0) {
+      _prefs.ping_test_max_replies = 3;
       _prefs.ping_test_enabled = 1;
       savePrefs();
       strcpy(reply, "OK");
-    } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) {
+    } else if (strcmp(val, "off") == 0) {
+      _prefs.ping_test_max_replies = 0;
       _prefs.ping_test_enabled = 0;
       savePrefs();
       strcpy(reply, "OK");
+    } else if (val[0] >= '0' && val[0] <= '9') {
+      int count = atoi(val);
+      if (count < 0 || count > 3) {
+        strcpy(reply, "Err - 0..3");
+      } else {
+        _prefs.ping_test_max_replies = (uint8_t)count;
+        _prefs.ping_test_enabled = count > 0 ? 1 : 0;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
     } else {
       strcpy(reply, "Err - ??");
     }

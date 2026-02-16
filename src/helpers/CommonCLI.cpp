@@ -89,7 +89,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->hourly_status_enabled, sizeof(_prefs->hourly_status_enabled)); // 580
     file.read((uint8_t *)&_prefs->busy_delay_threshold, sizeof(_prefs->busy_delay_threshold)); // 581
     file.read((uint8_t *)&_prefs->busy_delay_max_secs, sizeof(_prefs->busy_delay_max_secs)); // 582
-    // 584
+    file.read((uint8_t *)&_prefs->ping_public_max_replies, sizeof(_prefs->ping_public_max_replies)); // 584
+    file.read((uint8_t *)&_prefs->ping_test_max_replies, sizeof(_prefs->ping_test_max_replies)); // 585
+    // 586
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -116,7 +118,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
     _prefs->ping_public_enabled = constrain(_prefs->ping_public_enabled, 0, 1);
+    _prefs->ping_public_max_replies = constrain(_prefs->ping_public_max_replies, 0, 3);
     _prefs->ping_test_enabled = constrain(_prefs->ping_test_enabled, 0, 1);
+    _prefs->ping_test_max_replies = constrain(_prefs->ping_test_max_replies, 0, 3);
     _prefs->hourly_status_enabled = constrain(_prefs->hourly_status_enabled, 0, 1);
     _prefs->busy_delay_threshold = constrain(_prefs->busy_delay_threshold, 0, 100);
     _prefs->busy_delay_max_secs = constrain(_prefs->busy_delay_max_secs, 0, 3600);
@@ -186,7 +190,9 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->hourly_status_enabled, sizeof(_prefs->hourly_status_enabled));    // 580
     file.write((uint8_t *)&_prefs->busy_delay_threshold, sizeof(_prefs->busy_delay_threshold));      // 581
     file.write((uint8_t *)&_prefs->busy_delay_max_secs, sizeof(_prefs->busy_delay_max_secs));        // 582
-    // 584
+    file.write((uint8_t *)&_prefs->ping_public_max_replies, sizeof(_prefs->ping_public_max_replies)); // 584
+    file.write((uint8_t *)&_prefs->ping_test_max_replies, sizeof(_prefs->ping_test_max_replies));    // 585
+    // 586
 
     file.close();
   }
