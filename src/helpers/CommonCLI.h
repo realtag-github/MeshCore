@@ -89,6 +89,18 @@ public:
   virtual void saveIdentity(const mesh::LocalIdentity& new_id) = 0;
   virtual void clearStats() = 0;
   virtual void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) = 0;
+  virtual void triggerNodeDiscovery() {
+    // no op by default
+  };
+  virtual void setNodeDiscoveryEnabled(bool enable) {
+    // no op by default
+  };
+  virtual void setNodeDiscoveryInterval(uint16_t mins) {
+    (void)mins;
+  };
+  virtual void formatNodeDiscoveryStatus(char* reply) {
+    strcpy(reply, "ERR: not supported");
+  };
 
   virtual void setBridgeState(bool enable) {
     // no op by default

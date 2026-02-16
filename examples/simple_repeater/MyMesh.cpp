@@ -1276,6 +1276,16 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
 #define CTL_TYPE_NODE_DISCOVER_REQ   0x80
 #define CTL_TYPE_NODE_DISCOVER_RESP  0x90
 
+#ifndef NODE_DISCOVER_INTERVAL_MINS
+  #define NODE_DISCOVER_INTERVAL_MINS 10
+#endif
+#ifndef NODE_DISCOVER_JITTER_MILLIS
+  #define NODE_DISCOVER_JITTER_MILLIS 30000
+#endif
+#ifndef NODE_DISCOVER_INITIAL_DELAY_MILLIS
+  #define NODE_DISCOVER_INITIAL_DELAY_MILLIS 8000
+#endif
+
 void MyMesh::onControlDataRecv(mesh::Packet* packet) {
   uint8_t type = packet->payload[0] & 0xF0;    // just test upper 4 bits
   if (type == CTL_TYPE_NODE_DISCOVER_REQ && packet->payload_len >= 6
@@ -1304,6 +1314,90 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
         sendZeroHop(resp, getRetransmitDelay(resp)*4);  // apply random delay (widened x4), as multiple nodes can respond to this
       }
     }
+  } else if (type == CTL_TYPE_NODE_DISCOVER_RESP && packet->payload_len >= 6) {
+    uint8_t node_type = packet->payload[0] & 0x0F;
+    if (node_type != ADV_TYPE_REPEATER) {
+      return;
+    }
+    if (packet->payload_len < 6 + PUB_KEY_SIZE) {
+      MESH_DEBUG_PRINTLN("onControlDataRecv: DISCOVER_RESP pubkey too short: %d", (uint32_t)packet->payload_len);
+      return;
+    }
+
+    mesh::Identity id(&packet->payload[6]);
+    if (id.matches(self_id)) {
+      return;
+    }
+    putNeighbour(id, rtc_clock.getCurrentTime(), packet->getSNR());
+  }
+}
+
+void MyMesh::sendNodeDiscoverReq() {
+  if (_prefs.disable_fwd) return;
+
+  uint8_t data[10];
+  data[0] = CTL_TYPE_NODE_DISCOVER_REQ; // prefix_only=0
+  data[1] = (1 << ADV_TYPE_REPEATER);
+  getRNG()->random(&data[2], 4); // tag
+  uint32_t since = 0;
+  memcpy(&data[6], &since, 4);
+
+  auto pkt = createControlData(data, sizeof(data));
+  if (pkt) {
+    sendZeroHop(pkt);
+  }
+}
+
+void MyMesh::triggerNodeDiscovery() {
+  sendNodeDiscoverReq();
+  if (node_discover_enabled && node_discover_interval_mins > 0) {
+    uint32_t jitter = NODE_DISCOVER_JITTER_MILLIS ? getRNG()->nextInt(0, NODE_DISCOVER_JITTER_MILLIS + 1) : 0;
+    next_discover = futureMillis(((uint32_t)node_discover_interval_mins) * 60 * 1000 + jitter);
+  } else {
+    next_discover = 0;
+  }
+}
+
+void MyMesh::setNodeDiscoveryEnabled(bool enable) {
+  node_discover_enabled = enable;
+  if (node_discover_enabled && node_discover_interval_mins > 0) {
+    uint32_t jitter = NODE_DISCOVER_JITTER_MILLIS ? getRNG()->nextInt(0, NODE_DISCOVER_JITTER_MILLIS + 1) : 0;
+    next_discover = futureMillis(NODE_DISCOVER_INITIAL_DELAY_MILLIS + jitter);
+  } else {
+    next_discover = 0;
+  }
+}
+
+void MyMesh::setNodeDiscoveryInterval(uint16_t mins) {
+  node_discover_interval_mins = mins;
+  if (node_discover_enabled && node_discover_interval_mins > 0) {
+    uint32_t jitter = NODE_DISCOVER_JITTER_MILLIS ? getRNG()->nextInt(0, NODE_DISCOVER_JITTER_MILLIS + 1) : 0;
+    next_discover = futureMillis(((uint32_t)node_discover_interval_mins) * 60 * 1000 + jitter);
+  } else {
+    next_discover = 0;
+  }
+}
+
+void MyMesh::formatNodeDiscoveryStatus(char* reply) {
+  const char* state = node_discover_enabled ? "on" : "off";
+  uint32_t next_secs = 0;
+  bool has_next = false;
+  if (node_discover_enabled && next_discover != 0) {
+    uint32_t now = millis();
+    has_next = true;
+    if (next_discover > now) {
+      next_secs = (next_discover - now + 999) / 1000;
+    } else {
+      next_secs = 0;
+    }
+  }
+
+  if (has_next) {
+    sprintf(reply, "discover=%s interval=%d mins next=%d secs",
+            state, (uint32_t)node_discover_interval_mins, next_secs);
+  } else {
+    sprintf(reply, "discover=%s interval=%d mins next=disabled",
+            state, (uint32_t)node_discover_interval_mins);
   }
 }
 
@@ -1323,6 +1417,9 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   last_millis = 0;
   uptime_millis = 0;
   next_local_advert = next_flood_advert = 0;
+  next_discover = 0;
+  node_discover_enabled = false;
+  node_discover_interval_mins = NODE_DISCOVER_INTERVAL_MINS;
   dirty_contacts_expiry = 0;
   set_radio_at = revert_radio_at = 0;
   _logging = false;
@@ -2009,6 +2106,16 @@ void MyMesh::loop() {
     if (pkt) sendZeroHop(pkt);
 
     updateAdvertTimer(); // schedule next local advert
+  }
+
+  if (next_discover && millisHasNowPassed(next_discover)) {
+    sendNodeDiscoverReq();
+    if (node_discover_enabled && node_discover_interval_mins > 0) {
+      uint32_t jitter = NODE_DISCOVER_JITTER_MILLIS ? getRNG()->nextInt(0, NODE_DISCOVER_JITTER_MILLIS + 1) : 0;
+      next_discover = futureMillis(((uint32_t)node_discover_interval_mins) * 60 * 1000 + jitter);
+    } else {
+      next_discover = 0;
+    }
   }
 
   if (set_radio_at && millisHasNowPassed(set_radio_at)) { // apply pending (temporary) radio params

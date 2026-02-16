@@ -231,6 +231,27 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       // send flood advert
       _callbacks->sendSelfAdvertisement(1500, true);  // longer delay, give CLI response time to be sent first
       strcpy(reply, "OK - Advert sent");
+    } else if (memcmp(command, "discover", 8) == 0) {
+      if (memcmp(command, "discover on", 11) == 0) {
+        _callbacks->setNodeDiscoveryEnabled(true);
+        strcpy(reply, "OK - Discover enabled");
+      } else if (memcmp(command, "discover off", 12) == 0) {
+        _callbacks->setNodeDiscoveryEnabled(false);
+        strcpy(reply, "OK - Discover disabled");
+      } else if (memcmp(command, "discover status", 15) == 0) {
+        _callbacks->formatNodeDiscoveryStatus(reply);
+      } else if (memcmp(command, "discover interval ", 18) == 0) {
+        uint32_t mins = _atoi(&command[18]);
+        if (mins == 0 || mins > 1440) {
+          strcpy(reply, "ERR: interval mins 1-1440");
+        } else {
+          _callbacks->setNodeDiscoveryInterval((uint16_t)mins);
+          sprintf(reply, "OK - interval %d mins", (uint32_t)mins);
+        }
+      } else {
+        _callbacks->triggerNodeDiscovery();
+        strcpy(reply, "OK - Discover sent");
+      }
     } else if (memcmp(command, "clock sync", 10) == 0) {
       uint32_t curr = getRTCClock()->getCurrentTime();
       if (sender_timestamp > curr) {
