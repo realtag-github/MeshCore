@@ -2,6 +2,8 @@
 
 These commands are available in the Simple Repeater serial console (and via remote admin).
 
+**Base:** This fork is based on `upstream/main` at commit `295f67d4` (v1.13.0).
+
 - Example:
   - `wifi.ssid MyWiFi`
   - `wifi.pwd MySecretPass`
@@ -18,10 +20,12 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `wifi.webhook clear` — clear the stored webhook URL.
 - `wifi.webhook test` / `wifi.test` — send a test webhook message.
 - `wifi.connect` — force a reconnect using saved credentials.
-- `ping.public` — show whether public `!ping` replies are enabled.
-- `ping.public on|off` — enable/disable public `!ping` replies.
-- `ping.test` — show whether "test" triggers are enabled (default off).
-- `ping.test on|off` — enable/disable "test" triggers.
+- `ping.public` — show max reply count for public `!ping` (0-3).
+- `ping.public 0|1|2|3` — set max reply count for public `!ping` (0 disables).
+- `ping.public on|off` — shortcut for `3` / `0`.
+- `ping.test` — show max reply count for `#test` `!ping` (0-3).
+- `ping.test 0|1|2|3` — set max reply count for `#test` `!ping` (0 disables).
+- `ping.test on|off` — shortcut for `3` / `0`.
 - `status.report` — show whether the hourly status report is enabled.
 - `status.report on|off` — enable/disable the hourly status report.
 - `busy.delay.threshold` — show the busy% threshold for delaying `!` replies (default 20%).
@@ -42,7 +46,6 @@ On Heltec boards, the repeater LCD shows WiFi status:
 The repeater reports to the `#test` channel on the hour (:00) and once on boot (toggle with `status.report`). It only replies to `!ping` unless `ping.test` is enabled. Group commands:
 
 - `!ping` — reply with path and RF stats.
-- `!5count` — reply 5 times with the same info as `!ping` (no "Pong").
 - `!status` — reply with the hourly report info and tag the sender.
 
 Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
