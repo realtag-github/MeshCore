@@ -1324,6 +1324,16 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
       return;
     }
 
+    if (pending_discover_tag == 0 || millisHasNowPassed(pending_discover_until)) {
+      pending_discover_tag = 0;
+      return;
+    }
+    uint32_t tag;
+    memcpy(&tag, &packet->payload[2], 4);
+    if (tag != pending_discover_tag) {
+      return;
+    }
+
     mesh::Identity id(&packet->payload[6]);
     if (id.matches(self_id)) {
       return;
@@ -1333,12 +1343,12 @@ void MyMesh::onControlDataRecv(mesh::Packet* packet) {
 }
 
 void MyMesh::sendNodeDiscoverReq() {
-  if (_prefs.disable_fwd) return;
-
   uint8_t data[10];
   data[0] = CTL_TYPE_NODE_DISCOVER_REQ; // prefix_only=0
   data[1] = (1 << ADV_TYPE_REPEATER);
   getRNG()->random(&data[2], 4); // tag
+  memcpy(&pending_discover_tag, &data[2], 4);
+  pending_discover_until = futureMillis(60000);
   uint32_t since = 0;
   memcpy(&data[6], &since, 4);
 
@@ -1485,6 +1495,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.advert_loc_policy = ADVERT_LOC_PREFS;
 
   _prefs.adc_multiplier = 0.0f; // 0.0f means use default board multiplier
+  pending_discover_tag = 0;
+  pending_discover_until = 0;
 
   _prefs.wifi_ssid[0] = 0;
   _prefs.wifi_pwd[0] = 0;
