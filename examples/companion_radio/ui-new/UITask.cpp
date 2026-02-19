@@ -31,6 +31,9 @@
 
 #include "icons.h"
 
+static inline uint32_t monotonicSeconds() { return millis() / 1000; }
+static inline uint32_t elapsedSeconds(uint32_t now, uint32_t then) { return now - then; }
+
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
@@ -233,7 +236,7 @@ public:
       for (int i = 0; i < UI_RECENT_LIST_SIZE; i++, y += 11) {
         auto a = &recent[i];
         if (a->name[0] == 0) continue;  // empty slot
-        int secs = _rtc->getCurrentTime() - a->recv_timestamp;
+        int secs = (int)elapsedSeconds(monotonicSeconds(), a->recv_timestamp);
         if (secs < 60) {
           sprintf(tmp, "%ds", secs);
         } else if (secs < 60*60) {
@@ -477,7 +480,7 @@ public:
     if (num_unread < MAX_UNREAD_MSGS) num_unread++;
 
     auto p = &unread[head];
-    p->timestamp = _rtc->getCurrentTime();
+    p->timestamp = monotonicSeconds();
     if (path_len == 0xFF) {
       sprintf(p->origin, "(D) %s:", from_name);
     } else {
@@ -496,7 +499,7 @@ public:
 
     auto p = &unread[head];
 
-    int secs = _rtc->getCurrentTime() - p->timestamp;
+    int secs = (int)elapsedSeconds(monotonicSeconds(), p->timestamp);
     if (secs < 60) {
       sprintf(tmp, "%ds", secs);
     } else if (secs < 60*60) {

@@ -82,7 +82,7 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
   // update neighbour info
   neighbour->id = id;
   neighbour->advert_timestamp = timestamp;
-  neighbour->heard_timestamp = getRTCClock()->getCurrentTime();
+  neighbour->heard_timestamp = getMonotonicSeconds();
   neighbour->snr = (int8_t)(snr * 4);
 #endif
 }
@@ -118,7 +118,7 @@ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secr
 
     MESH_DEBUG_PRINTLN("Login success!");
     client->last_timestamp = sender_timestamp;
-    client->last_activity = getRTCClock()->getCurrentTime();
+    client->last_activity = getMonotonicSeconds();
     client->permissions &= ~0x03;
     client->permissions |= perms;
     memcpy(client->shared_secret, secret, PUB_KEY_SIZE);
@@ -346,7 +346,7 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
 #if MAX_NEIGHBOURS
         // add next neighbour to results
         auto neighbour = sorted_neighbours[index + offset];
-        uint32_t heard_seconds_ago = getRTCClock()->getCurrentTime() - neighbour->heard_timestamp;
+        uint32_t heard_seconds_ago = elapsedSeconds(getMonotonicSeconds(), neighbour->heard_timestamp);
         memcpy(&results_buffer[results_offset], neighbour->id.pub_key, pubkey_prefix_length); results_offset += pubkey_prefix_length;
         memcpy(&results_buffer[results_offset], &heard_seconds_ago, 4); results_offset += 4;
         memcpy(&results_buffer[results_offset], &neighbour->snr, 1); results_offset += 1;
@@ -607,7 +607,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
       if (reply_len == 0) return; // invalid command
 
       client->last_timestamp = timestamp;
-      client->last_activity = getRTCClock()->getCurrentTime();
+      client->last_activity = getMonotonicSeconds();
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
@@ -638,7 +638,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
     } else if (sender_timestamp >= client->last_timestamp) { // prevent replay attacks
       bool is_retry = (sender_timestamp == client->last_timestamp);
       client->last_timestamp = sender_timestamp;
-      client->last_activity = getRTCClock()->getCurrentTime();
+      client->last_activity = getMonotonicSeconds();
 
       // len can be > original length, but 'text' will be padded with zeroes
       data[len] = 0; // need to make a C string again, with null terminator
@@ -702,7 +702,7 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
     auto client = acl.getClientByIdx(i);
 
     memcpy(client->out_path, path, client->out_path_len = path_len); // store a copy of path, for sendDirect()
-    client->last_activity = getRTCClock()->getCurrentTime();
+    client->last_activity = getMonotonicSeconds();
   } else {
     MESH_DEBUG_PRINTLN("onPeerPathRecv: invalid peer idx: %d", i);
   }
@@ -982,7 +982,7 @@ void MyMesh::formatNeighborsReply(char *reply) {
     mesh::Utils::toHex(hex, neighbour->id.pub_key, 4);
 
     // add next neighbour
-    uint32_t secs_ago = getRTCClock()->getCurrentTime() - neighbour->heard_timestamp;
+    uint32_t secs_ago = elapsedSeconds(getMonotonicSeconds(), neighbour->heard_timestamp);
     sprintf(dp, "%s:%d:%d", hex, secs_ago, neighbour->snr);
     while (*dp)
       dp++; // find end of string

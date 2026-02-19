@@ -38,6 +38,9 @@ protected:
 
   virtual uint32_t getCADFailRetryDelay() const override;
 
+  uint32_t getMonotonicSeconds() const { return _ms->getMillis() / 1000; }
+  uint32_t elapsedSeconds(uint32_t now, uint32_t then) const { return now - then; }
+
   /**
    * \brief  Decide what to do with received packet, ie. discard, forward, or hold
    */

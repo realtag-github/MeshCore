@@ -324,7 +324,7 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
       client->extra.room.pending_ack = 0;
       client->extra.room.push_failures = 0;
 
-      client->last_activity = getRTCClock()->getCurrentTime();
+      client->last_activity = getMonotonicSeconds();
       client->permissions &= ~0x03;
       client->permissions |= perm;
       memcpy(client->shared_secret, secret, PUB_KEY_SIZE);
@@ -407,7 +407,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
       client->last_timestamp = sender_timestamp;
 
       uint32_t now = getRTCClock()->getCurrentTimeUnique();
-      client->last_activity = now;
+      client->last_activity = getMonotonicSeconds();
       client->extra.room.push_failures = 0; // reset so push can resume (if prev failed)
 
       // len can be > original length, but 'text' will be padded with zeroes
@@ -501,7 +501,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
       client->last_timestamp = sender_timestamp;
 
       uint32_t now = getRTCClock()->getCurrentTime();
-      client->last_activity = now; // <-- THIS will keep client connection alive
+      client->last_activity = getMonotonicSeconds(); // <-- THIS will keep client connection alive
       client->extra.room.push_failures = 0;   // reset so push can resume (if prev failed)
 
       if (data[4] == REQ_TYPE_KEEP_ALIVE && packet->isRouteDirect()) { // request type
@@ -564,7 +564,7 @@ bool MyMesh::onPeerPathRecv(mesh::Packet *packet, int sender_idx, const uint8_t 
     MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t)path_len);
     auto client = acl.getClientByIdx(i);
     memcpy(client->out_path, path, client->out_path_len = path_len); // store a copy of path, for sendDirect()
-    client->last_activity = getRTCClock()->getCurrentTime();
+    client->last_activity = getMonotonicSeconds();
   } else {
     MESH_DEBUG_PRINTLN("onPeerPathRecv: invalid peer idx: %d", i);
   }

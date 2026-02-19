@@ -352,7 +352,7 @@ uint8_t SensorMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* 
 
     MESH_DEBUG_PRINTLN("Login success!");
     client->last_timestamp = sender_timestamp;
-    client->last_activity = getRTCClock()->getCurrentTime();
+    client->last_activity = getMonotonicSeconds();
     client->permissions |= PERM_ACL_ADMIN;
     memcpy(client->shared_secret, secret, PUB_KEY_SIZE);
 
@@ -531,7 +531,7 @@ void SensorMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_i
       if (reply_len == 0) return;  // invalid command
 
       from->last_timestamp = timestamp;
-      from->last_activity = getRTCClock()->getCurrentTime();
+      from->last_activity = getMonotonicSeconds();
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
@@ -574,7 +574,7 @@ void SensorMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_i
         }
       } else if (flags == TXT_TYPE_CLI_DATA) {  
         from->last_timestamp = sender_timestamp;
-        from->last_activity = getRTCClock()->getCurrentTime();
+        from->last_activity = getMonotonicSeconds();
 
         // len can be > original length, but 'text' will be padded with zeroes
         data[len] = 0; // need to make a C string again, with null terminator
@@ -667,7 +667,7 @@ bool SensorMesh::onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint
   // NOTE: for this impl, we just replace the current 'out_path' regardless, whenever sender sends us a new out_path.
   // FUTURE: could store multiple out_paths per contact, and try to find which is the 'best'(?)
   memcpy(from->out_path, path, from->out_path_len = path_len);  // store a copy of path, for sendDirect()
-  from->last_activity = getRTCClock()->getCurrentTime();
+  from->last_activity = getMonotonicSeconds();
 
   // REVISIT: maybe make ALL out_paths non-persisted to minimise flash writes??
   if (from->isAdmin()) {

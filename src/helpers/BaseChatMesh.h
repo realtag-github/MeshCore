@@ -44,7 +44,7 @@ public:
 struct ConnectionInfo {
   mesh::Identity server_id;
   unsigned long next_ping;
-  uint32_t last_activity;
+  uint32_t last_activity; // monotonic seconds
   uint32_t keep_alive_millis;
   uint32_t expected_ack;
 };

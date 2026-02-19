@@ -64,7 +64,7 @@ struct RepeaterStats {
 struct NeighbourInfo {
   mesh::Identity id;
   uint32_t advert_timestamp;
-  uint32_t heard_timestamp;
+  uint32_t heard_timestamp; // monotonic seconds (local)
   int8_t snr; // multiplied by 4, user should divide to get float value
 };
 

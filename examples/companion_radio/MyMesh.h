@@ -80,7 +80,7 @@ struct AdvertPath {
   uint8_t pubkey_prefix[7];
   uint8_t path_len;
   char    name[32];
-  uint32_t recv_timestamp;
+  uint32_t recv_timestamp; // monotonic seconds
   uint8_t path[MAX_PATH_SIZE];
 };
 

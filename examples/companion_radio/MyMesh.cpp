@@ -365,7 +365,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
 
     memcpy(p->pubkey_prefix, contact.id.pub_key, sizeof(p->pubkey_prefix));
     strcpy(p->name, contact.name);
-    p->recv_timestamp = getRTCClock()->getCurrentTime();
+    p->recv_timestamp = getMonotonicSeconds();
     p->path_len = path_len;
     memcpy(p->path, path, p->path_len);
   }

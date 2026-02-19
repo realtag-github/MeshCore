@@ -17,7 +17,7 @@ struct ClientInfo {
   uint8_t out_path[MAX_PATH_SIZE];
   uint8_t shared_secret[PUB_KEY_SIZE];
   uint32_t last_timestamp;   // by THEIR clock  (transient)
-  uint32_t last_activity;    // by OUR clock    (transient)
+  uint32_t last_activity;    // monotonic seconds (transient)
   union  {
     struct {
       uint32_t sync_since;  // sync messages SINCE this timestamp (by OUR clock)
