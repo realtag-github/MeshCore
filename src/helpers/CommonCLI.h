@@ -59,6 +59,7 @@ struct NodePrefs { // persisted to file
   uint8_t ping_public_max_replies;
   uint8_t ping_test_enabled;
   uint8_t ping_test_max_replies;
+  uint8_t ping_simple_enabled;
   uint8_t hourly_status_enabled;
   uint8_t busy_delay_threshold;
   uint16_t busy_delay_max_secs;

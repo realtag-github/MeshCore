@@ -963,7 +963,9 @@ void MyMesh::sendPingReply(const mesh::GroupChannel& channel) {
   memcpy(temp, &timestamp, 4);
   temp[4] = 0;  // TXT_TYPE_PLAIN
 
-  if (pending_ping_include_prefix) {
+  if (_prefs.ping_simple_enabled) {
+    snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: !pong", _prefs.node_name);
+  } else if (pending_ping_include_prefix) {
     snprintf((char*)&temp[5], MAX_PACKET_PAYLOAD - 5, "%s: %s [%d/%d]",
              _prefs.node_name, reply_with_delay, attempt, total);
   } else {
@@ -1504,6 +1506,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.ping_public_max_replies = 0;
   _prefs.ping_test_enabled = 0;
   _prefs.ping_test_max_replies = 3;
+  _prefs.ping_simple_enabled = 0;
   _prefs.hourly_status_enabled = 1;
   _prefs.busy_delay_threshold = 20;
   _prefs.busy_delay_max_secs = 120;
@@ -2037,6 +2040,22 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
         savePrefs();
         strcpy(reply, "OK");
       }
+    } else {
+      strcpy(reply, "Err - ??");
+    }
+  } else if (memcmp(command, "ping.simple", 11) == 0) {
+    const char* val = command + 11;
+    while (*val == ' ') val++;
+    if (*val == 0) {
+      snprintf(reply, 160, "ping.simple=%u", (unsigned)_prefs.ping_simple_enabled);
+    } else if (strcmp(val, "on") == 0) {
+      _prefs.ping_simple_enabled = 1;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else if (strcmp(val, "off") == 0) {
+      _prefs.ping_simple_enabled = 0;
+      savePrefs();
+      strcpy(reply, "OK");
     } else {
       strcpy(reply, "Err - ??");
     }
