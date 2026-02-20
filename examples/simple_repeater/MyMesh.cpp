@@ -927,7 +927,7 @@ void MyMesh::pumpDiscordWebhook() {
 
 bool MyMesh::isPingChannel(const mesh::GroupChannel& channel) const {
   if (_prefs.ping_public_enabled && public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0) return true;
-  if (test_channel_ready && memcmp(channel.hash, test_channel.hash, PATH_HASH_SIZE) == 0) return true;
+  if (_prefs.ping_test_enabled && test_channel_ready && memcmp(channel.hash, test_channel.hash, PATH_HASH_SIZE) == 0) return true;
   return false;
 }
 
@@ -1216,8 +1216,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   if (!isPingChannel(channel)) return;
   bool is_ping = containsSubstringCaseInsensitive(body, "!ping");
   bool is_status = containsSubstringCaseInsensitive(body, "!status");
-  bool is_test = _prefs.ping_test_enabled && containsSubstringCaseInsensitive(body, "test");
-  if (!is_ping && !is_status && !is_test) return;
+  if (!is_ping && !is_status) return;
 
   bool is_public_channel = public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0;
   bool is_test_channel = test_channel_ready && memcmp(channel.hash, test_channel.hash, PATH_HASH_SIZE) == 0;
