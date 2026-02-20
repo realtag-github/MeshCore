@@ -26,6 +26,8 @@ These commands are available in the Simple Repeater serial console (and via remo
 - `ping.test` — show max reply count for `#test` `!ping` (0-3).
 - `ping.test 0|1|2|3` — set max reply count for `#test` `!ping` (0 disables).
 - `ping.test on|off` — shortcut for `3` / `0`.
+- `ping.simple` — show simple `!ping` reply state (0/1).
+- `ping.simple on|off` — toggle short `!ping` reply (`name: !pong`).
 - `status.report` — show whether the hourly status report is enabled.
 - `status.report on|off` — enable/disable the hourly status report.
 - `busy.delay.threshold` — show the busy% threshold for delaying `!` replies (default 20%).
@@ -45,7 +47,7 @@ On Heltec boards, the repeater LCD shows WiFi status:
 
 The repeater reports to the `#test` channel on the hour (:00) and once on boot (toggle with `status.report`). It only replies to `!ping` unless `ping.test` is enabled. Group commands:
 
-- `!ping` — reply with path and RF stats.
+- `!ping` — reply with path and RF stats (or `name: !pong` when `ping.simple` is enabled).
 - `!status` — reply with the hourly report info and tag the sender.
 
 Use `wifi.webhook test` (or `wifi.test`) to send a manual test message.
