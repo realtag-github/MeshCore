@@ -69,11 +69,11 @@ struct NeighbourInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "15 Feb 2026"
+  #define FIRMWARE_BUILD_DATE   "6 Mar 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION_BASE   "v1.13.0"
+  #define FIRMWARE_VERSION_BASE   "v1.14.0"
   #ifdef GIT_HASH
     #define FIRMWARE_VERSION      FIRMWARE_VERSION_BASE "-" GIT_HASH
   #else
@@ -100,6 +100,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   uint8_t reply_path[MAX_PATH_SIZE];
   int8_t  reply_path_len;
+  uint8_t reply_path_hash_size;
   char pending_ping_sender[40];
   char pending_ping_path[384];
   uint8_t pending_ping_retries;
@@ -176,6 +177,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool isPingChannel(const mesh::GroupChannel& channel) const;
 
   File openAppend(const char* fname);
+  bool isLooped(const mesh::Packet* packet, const uint8_t max_counters[]);
 
 protected:
   float getAirtimeBudgetFactor() const override {
