@@ -15,4 +15,5 @@ def _get_git_hash():
 
 
 git_hash = _get_git_hash()
-env.Append(CPPDEFINES=[("GIT_HASH", '"%s"' % git_hash)])
+# Define as a string literal for the compiler (escape quotes).
+env.Append(CPPDEFINES=[("GIT_HASH", '\\"%s\\"' % git_hash)])
