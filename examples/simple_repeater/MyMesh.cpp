@@ -176,15 +176,37 @@ static void formatPathString(const uint8_t* path, uint8_t path_len, char* dest, 
     return;
   }
 
+  if (!mesh::Packet::isValidPathLen(path_len)) {
+    strncpy(dest, "invalid", dest_len);
+    dest[dest_len - 1] = 0;
+    return;
+  }
+
+  uint8_t hash_count = path_len & 63;
+  uint8_t hash_size = (path_len >> 6) + 1;
+  if (hash_count == 0) {
+    strncpy(dest, "direct", dest_len);
+    dest[dest_len - 1] = 0;
+    return;
+  }
   size_t used = 0;
-  for (uint8_t i = 0; i < path_len; i++) {
+  for (uint8_t i = 0; i < hash_count; i++) {
     const char* sep = (i == 0) ? "" : ">";
-    int written = snprintf(dest + used, dest_len - used, "%s%02X", sep, path[i]);
+    int written = snprintf(dest + used, dest_len - used, "%s", sep);
     if (written < 0 || (size_t)written >= dest_len - used) {
       dest[dest_len - 1] = 0;
       return;
     }
     used += (size_t)written;
+
+    for (uint8_t j = 0; j < hash_size; j++) {
+      written = snprintf(dest + used, dest_len - used, "%02X", path[i * hash_size + j]);
+      if (written < 0 || (size_t)written >= dest_len - used) {
+        dest[dest_len - 1] = 0;
+        return;
+      }
+      used += (size_t)written;
+    }
   }
 }
 
