@@ -122,9 +122,9 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
     _prefs->ping_public_enabled = constrain(_prefs->ping_public_enabled, 0, 1);
-    _prefs->ping_public_max_replies = constrain(_prefs->ping_public_max_replies, 0, 3);
+    _prefs->ping_public_max_replies = constrain(_prefs->ping_public_max_replies, 0, 10);
     _prefs->ping_test_enabled = constrain(_prefs->ping_test_enabled, 0, 1);
-    _prefs->ping_test_max_replies = constrain(_prefs->ping_test_max_replies, 0, 3);
+    _prefs->ping_test_max_replies = constrain(_prefs->ping_test_max_replies, 0, 10);
     _prefs->ping_simple_enabled = constrain(_prefs->ping_simple_enabled, 0, 1);
     _prefs->hourly_status_enabled = constrain(_prefs->hourly_status_enabled, 0, 1);
     _prefs->busy_delay_threshold = constrain(_prefs->busy_delay_threshold, 0, 100);

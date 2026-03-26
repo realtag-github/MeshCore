@@ -103,6 +103,17 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t reply_path_hash_size;
   char pending_ping_sender[40];
   char pending_ping_path[384];
+  uint8_t pending_ping_payload[MAX_PACKET_PAYLOAD];
+  size_t pending_ping_payload_len;
+  uint32_t pending_ping_send_delay_ms;
+  uint8_t pending_status_payload[MAX_PACKET_PAYLOAD];
+  size_t pending_status_payload_len;
+  uint32_t pending_status_send_delay_ms;
+  uint8_t pending_status_retries;
+  uint8_t pending_status_total;
+  mesh::GroupChannel pending_status_channel;
+  bool pending_status_channel_ready;
+  unsigned long next_status_send_at;
   uint8_t pending_ping_retries;
   uint8_t pending_ping_total;
   bool pending_ping_include_prefix;
