@@ -118,7 +118,6 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   unsigned long pending_discover_until;
   bool region_load_active;
   unsigned long dirty_contacts_expiry;
-  unsigned long dirty_contacts_expiry;
 #if MAX_NEIGHBOURS
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
@@ -135,6 +134,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool test_channel_ready;
 #if defined(ESP32)
   static const uint8_t DISCORD_WEBHOOK_QUEUE_SIZE = 128;
+  static const uint8_t DISCORD_WEBHOOK_DEDUPE_SIZE = 24;
   unsigned long next_wifi_attempt_at;
   unsigned long next_webhook_attempt_at;
   uint8_t webhook_head;
@@ -143,9 +143,16 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   struct WebhookItem {
     char sender[40];
     char body[200];
+    uint8_t retry_count;
+  };
+  struct WebhookDedupeItem {
+    uint32_t hash;
+    unsigned long expires_at;
   };
   WebhookItem webhook_queue[DISCORD_WEBHOOK_QUEUE_SIZE];
+  WebhookDedupeItem webhook_dedupe[DISCORD_WEBHOOK_DEDUPE_SIZE];
   void initWifiClient();
+  bool shouldQueueDiscordWebhook(const char* sender, const char* body);
   void queueDiscordWebhook(const char* sender, const char* body);
   void pumpDiscordWebhook();
 #endif

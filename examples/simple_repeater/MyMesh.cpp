@@ -79,6 +79,8 @@ static const uint8_t TEST_GROUP_SECRET[16] = {
 #if defined(ESP32)
   #define DISCORD_WEBHOOK_MIN_INTERVAL_MS 200
   #define DISCORD_WEBHOOK_RETRY_DELAY_MS 2000
+  #define DISCORD_WEBHOOK_MAX_RETRIES 2
+  #define DISCORD_WEBHOOK_DEDUPE_TTL_MS 30000UL
 
 static size_t jsonEscape(const char* src, char* dst, size_t dst_len) {
   if (dst_len == 0) return 0;
@@ -813,6 +815,29 @@ void MyMesh::initTestChannel() {
 }
 
 #if defined(ESP32)
+bool MyMesh::shouldQueueDiscordWebhook(const char* sender, const char* body) {
+  uint32_t msg_hash = 0;
+  mesh::Utils::sha256((uint8_t*)&msg_hash, sizeof(msg_hash),
+                      (const uint8_t*)sender, strlen(sender),
+                      (const uint8_t*)body, strlen(body));
+
+  int slot = -1;
+  for (uint8_t i = 0; i < DISCORD_WEBHOOK_DEDUPE_SIZE; i++) {
+    if (webhook_dedupe[i].expires_at == 0 || millisHasNowPassed(webhook_dedupe[i].expires_at)) {
+      if (slot < 0) slot = i;
+      continue;
+    }
+    if (webhook_dedupe[i].hash == msg_hash) {
+      return false;
+    }
+  }
+
+  if (slot < 0) slot = 0;
+  webhook_dedupe[slot].hash = msg_hash;
+  webhook_dedupe[slot].expires_at = futureMillis(DISCORD_WEBHOOK_DEDUPE_TTL_MS);
+  return true;
+}
+
 void MyMesh::initWifiClient() {
   if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) return;
   WiFi.mode(WIFI_STA);
@@ -824,6 +849,10 @@ void MyMesh::initWifiClient() {
 
 void MyMesh::queueDiscordWebhook(const char* sender, const char* body) {
   if (_prefs.discord_webhook_url[0] == 0) return;
+  if (!shouldQueueDiscordWebhook(sender, body)) {
+    MESH_DEBUG_PRINTLN("Discord webhook dedupe hit, skipping duplicate");
+    return;
+  }
   if (webhook_count >= DISCORD_WEBHOOK_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("Discord webhook queue full, dropping oldest");
     webhook_head = (uint8_t)((webhook_head + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
@@ -832,6 +861,7 @@ void MyMesh::queueDiscordWebhook(const char* sender, const char* body) {
   WebhookItem* item = &webhook_queue[webhook_tail];
   StrHelper::strncpy(item->sender, sender, sizeof(item->sender));
   StrHelper::strncpy(item->body, body, sizeof(item->body));
+  item->retry_count = 0;
   webhook_tail = (uint8_t)((webhook_tail + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
   webhook_count++;
   next_webhook_attempt_at = 0;
@@ -853,6 +883,25 @@ void MyMesh::pumpDiscordWebhook() {
   if (next_webhook_attempt_at && !millisHasNowPassed(next_webhook_attempt_at)) return;
 
   WebhookItem* item = &webhook_queue[webhook_head];
+  auto dropWebhookItem = [&]() {
+    webhook_head = (uint8_t)((webhook_head + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
+    webhook_count--;
+  };
+  auto scheduleWebhookRetry = [&](const char* reason) {
+    if (item->retry_count >= DISCORD_WEBHOOK_MAX_RETRIES) {
+      MESH_DEBUG_PRINTLN("Discord webhook dropped after %u retries: %s",
+                         (unsigned)item->retry_count, reason);
+      dropWebhookItem();
+      next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_MIN_INTERVAL_MS);
+      return;
+    }
+    item->retry_count++;
+    MESH_DEBUG_PRINTLN("Discord webhook retry %u/%u: %s",
+                       (unsigned)item->retry_count,
+                       (unsigned)DISCORD_WEBHOOK_MAX_RETRIES,
+                       reason);
+    next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_RETRY_DELAY_MS);
+  };
 
   char esc_sender[80];
   char esc_body[256];
@@ -894,7 +943,6 @@ void MyMesh::pumpDiscordWebhook() {
   } else if (starts_with_ci(p, http_scheme, 7)) {
     is_http = true;
   } else {
-    // Search for a scheme inside the string in case of hidden prefix chars.
     const char* s = p;
     while (*s) {
       if (starts_with_ci(s, https_scheme, 8)) { p = s; is_https = true; break; }
@@ -908,12 +956,12 @@ void MyMesh::pumpDiscordWebhook() {
   }
   char lead_hex[24];
   int lh = 0;
-  for (int i = 0; i < 8 && url[i]; i++) {
-    lh += snprintf(lead_hex + lh, sizeof(lead_hex) - lh, "%02X", (unsigned char)url[i]);
+  for (int i = 0; i < 8 && p[i]; i++) {
+    lh += snprintf(lead_hex + lh, sizeof(lead_hex) - lh, "%02X", (unsigned char)p[i]);
   }
   MESH_DEBUG_PRINTLN("Discord webhook scheme: %s lead=%s", is_https ? "https" : "http", lead_hex);
 
-  const char* host = url;
+  const char* host = p;
   if (is_https) host += 8;
   else if (is_http) host += 7;
 
@@ -934,9 +982,10 @@ void MyMesh::pumpDiscordWebhook() {
   if (is_https) {
     WiFiClientSecure client;
     client.setInsecure();
+    client.setTimeout(8000);
     if (!client.connect(host_buf, 443)) {
       MESH_DEBUG_PRINTLN("Discord webhook TLS connect failed");
-      next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_RETRY_DELAY_MS);
+      scheduleWebhookRetry("TLS connect failed");
       return;
     }
     client.printf("POST %s HTTP/1.1\r\n", path);
@@ -947,16 +996,17 @@ void MyMesh::pumpDiscordWebhook() {
     client.printf("Connection: close\r\n\r\n");
     client.write((const uint8_t*)payload, strlen(payload));
 
-    // Read status line
+    unsigned long wait_until = millis() + 8000;
+    while (client.connected() && !client.available() && (long)(millis() - wait_until) < 0) {
+      delay(10);
+    }
+
     String status = client.readStringUntil('\n');
     status.trim();
     if (status.startsWith("HTTP/")) {
       int sp = status.indexOf(' ');
-      if (sp > 0) {
-        code = status.substring(sp + 1).toInt();
-      }
+      if (sp > 0) code = status.substring(sp + 1).toInt();
     }
-    // Read headers, then body
     while (client.connected()) {
       String line = client.readStringUntil('\n');
       if (line == "\r" || line.length() == 0) break;
@@ -966,16 +1016,23 @@ void MyMesh::pumpDiscordWebhook() {
   } else {
     HTTPClient http;
     WiFiClient client;
-    http.begin(client, host_buf, 80, path, false);
+    client.setTimeout(8000);
+    if (!http.begin(client, host_buf, 80, path, false)) {
+      MESH_DEBUG_PRINTLN("Discord webhook HTTP begin failed");
+      scheduleWebhookRetry("HTTP begin failed");
+      return;
+    }
+    http.setConnectTimeout(8000);
+    http.setTimeout(8000);
     http.addHeader("Content-Type", "application/json");
+    http.addHeader("User-Agent", "MeshCore");
     code = http.POST((uint8_t*)payload, strlen(payload));
     resp = http.getString();
     http.end();
   }
 
   if (code >= 200 && code < 300) {
-    webhook_head = (uint8_t)((webhook_head + 1) % DISCORD_WEBHOOK_QUEUE_SIZE);
-    webhook_count--;
+    dropWebhookItem();
     MESH_DEBUG_PRINTLN("Discord webhook OK: HTTP %d", code);
     next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_MIN_INTERVAL_MS);
   } else {
@@ -987,7 +1044,7 @@ void MyMesh::pumpDiscordWebhook() {
       resp_buf[n] = 0;
     }
     MESH_DEBUG_PRINTLN("Discord webhook failed: HTTP %d body=%s", code, resp_buf[0] ? resp_buf : "<empty>");
-    next_webhook_attempt_at = futureMillis(DISCORD_WEBHOOK_RETRY_DELAY_MS);
+    scheduleWebhookRetry(resp_buf[0] ? resp_buf : "<empty>");
   }
 }
 #endif
@@ -1305,10 +1362,10 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
 
   StrHelper::strncpy(pending_ping_sender, sender_name, sizeof(pending_ping_sender));
   StrHelper::strncpy(pending_ping_path, path_str, sizeof(pending_ping_path));
-  pending_ping_is_5count = is_5count;
+  pending_ping_is_5count = false;
   pending_ping_channel = channel;
   pending_ping_channel_ready = true;
-  pending_ping_total = is_5count ? 5 : PING_REPLY_ATTEMPTS;
+  pending_ping_total = (uint8_t)min(3, (int)max_replies);
   pending_ping_retries = pending_ping_total;
   pending_ping_include_prefix = true;
   next_ping_send_at = 0;
@@ -1523,6 +1580,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   webhook_head = 0;
   webhook_tail = 0;
   webhook_count = 0;
+  memset(webhook_dedupe, 0, sizeof(webhook_dedupe));
 #endif
 
 #if MAX_NEIGHBOURS
