@@ -205,7 +205,6 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->ping_test_max_replies, sizeof(_prefs->ping_test_max_replies));    // 585
     file.write((uint8_t *)&_prefs->ping_simple_enabled, sizeof(_prefs->ping_simple_enabled));        // 586
     // 587
->>>>>>> bf6ae358 (Add busy-delay throttling for ! commands and bump version to v1.12.3)
 
     file.close();
   }
