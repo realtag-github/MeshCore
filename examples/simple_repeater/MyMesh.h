@@ -136,8 +136,13 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
 #if defined(ESP32)
   static const uint8_t DISCORD_WEBHOOK_QUEUE_SIZE = 128;
   static const uint8_t DISCORD_WEBHOOK_DEDUPE_SIZE = 24;
+  bool wifi_connected_last;
+  bool ntp_sync_in_progress;
   unsigned long next_wifi_attempt_at;
+  unsigned long next_ntp_attempt_at;
+  unsigned long ntp_request_deadline_at;
   unsigned long next_webhook_attempt_at;
+  uint32_t last_ntp_sync_time;
   uint8_t webhook_head;
   uint8_t webhook_tail;
   uint8_t webhook_count;
@@ -153,6 +158,10 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   WebhookItem webhook_queue[DISCORD_WEBHOOK_QUEUE_SIZE];
   WebhookDedupeItem webhook_dedupe[DISCORD_WEBHOOK_DEDUPE_SIZE];
   void initWifiClient();
+  bool pumpWifiClient();
+  void startNtpSync();
+  void pumpNtpClient();
+  void formatNtpStatus(char* reply, size_t reply_len) const;
   bool shouldQueueDiscordWebhook(const char* sender, const char* body);
   void queueDiscordWebhook(const char* sender, const char* body);
   void pumpDiscordWebhook();

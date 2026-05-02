@@ -6,6 +6,8 @@
   #include <WiFi.h>
   #include <HTTPClient.h>
   #include <WiFiClientSecure.h>
+  #include <esp_sntp.h>
+  #include <time.h>
 #endif
 
 /* ------------------------------ Config -------------------------------- */
@@ -81,6 +83,16 @@ static const uint8_t TEST_GROUP_SECRET[16] = {
   #define DISCORD_WEBHOOK_RETRY_DELAY_MS 2000
   #define DISCORD_WEBHOOK_MAX_RETRIES 2
   #define DISCORD_WEBHOOK_DEDUPE_TTL_MS 30000UL
+  #define NTP_SYNC_TIMEOUT_MS 20000UL
+  #define NTP_SYNC_RETRY_DELAY_MS 60000UL
+  #define NTP_SYNC_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)
+  static volatile uint32_t g_ntp_sync_epoch = 0;
+
+static void onNtpTimeSync(struct timeval* tv) {
+  if (tv && tv->tv_sec > 0) {
+    g_ntp_sync_epoch = (uint32_t)tv->tv_sec;
+  }
+}
 
 static size_t jsonEscape(const char* src, char* dst, size_t dst_len) {
   if (dst_len == 0) return 0;
@@ -852,12 +864,116 @@ bool MyMesh::shouldQueueDiscordWebhook(const char* sender, const char* body) {
 }
 
 void MyMesh::initWifiClient() {
+  wifi_connected_last = false;
+  ntp_sync_in_progress = false;
+  next_ntp_attempt_at = 0;
+  ntp_request_deadline_at = 0;
   if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) return;
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   MESH_DEBUG_PRINTLN("WiFi: connecting to AP '%s'", _prefs.wifi_ssid);
   WiFi.begin(_prefs.wifi_ssid, _prefs.wifi_pwd);
   next_wifi_attempt_at = futureMillis(15000);
+}
+
+bool MyMesh::pumpWifiClient() {
+  if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) {
+    wifi_connected_last = false;
+    ntp_sync_in_progress = false;
+    ntp_request_deadline_at = 0;
+    return false;
+  }
+
+  wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    if (!wifi_connected_last) {
+      String ip = WiFi.localIP().toString();
+      MESH_DEBUG_PRINTLN("WiFi: connected ip=%s", ip.c_str());
+      next_wifi_attempt_at = 0;
+      next_ntp_attempt_at = 0;
+    }
+    wifi_connected_last = true;
+    return true;
+  }
+
+  if (wifi_connected_last) {
+    MESH_DEBUG_PRINTLN("WiFi: disconnected status=%d", (int)status);
+    ntp_sync_in_progress = false;
+    ntp_request_deadline_at = 0;
+    next_ntp_attempt_at = 0;
+  }
+  wifi_connected_last = false;
+
+  if (next_wifi_attempt_at == 0 || millisHasNowPassed(next_wifi_attempt_at)) {
+    MESH_DEBUG_PRINTLN("WiFi: not connected, retrying AP '%s'", _prefs.wifi_ssid);
+    WiFi.begin(_prefs.wifi_ssid, _prefs.wifi_pwd);
+    next_wifi_attempt_at = futureMillis(15000);
+  }
+  return false;
+}
+
+void MyMesh::startNtpSync() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  g_ntp_sync_epoch = 0;
+  esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+  esp_sntp_set_sync_interval(NTP_SYNC_INTERVAL_MS);
+  esp_sntp_set_time_sync_notification_cb(onNtpTimeSync);
+  configTzTime("UTC0", "pool.ntp.org", "time.nist.gov", "time.google.com");
+  ntp_sync_in_progress = true;
+  ntp_request_deadline_at = futureMillis(NTP_SYNC_TIMEOUT_MS);
+  MESH_DEBUG_PRINTLN("NTP: sync requested");
+}
+
+void MyMesh::formatNtpStatus(char* reply, size_t reply_len) const {
+  if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) {
+    StrHelper::strncpy(reply, "wifi.ntp=off", reply_len);
+    return;
+  }
+  if (ntp_sync_in_progress) {
+    StrHelper::strncpy(reply, "wifi.ntp=syncing", reply_len);
+    return;
+  }
+  if (last_ntp_sync_time == 0) {
+    StrHelper::strncpy(reply, "wifi.ntp=pending", reply_len);
+    return;
+  }
+
+  DateTime dt(last_ntp_sync_time);
+  snprintf(reply, reply_len, "wifi.ntp=ok last=%02d:%02d %d/%d/%d UTC",
+           dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+}
+
+void MyMesh::pumpNtpClient() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  uint32_t synced_epoch = g_ntp_sync_epoch;
+  if (synced_epoch != 0) {
+    g_ntp_sync_epoch = 0;
+    getRTCClock()->setCurrentTime(synced_epoch);
+    last_ntp_sync_time = synced_epoch;
+    ntp_sync_in_progress = false;
+    ntp_request_deadline_at = 0;
+    next_ntp_attempt_at = futureMillis(NTP_SYNC_INTERVAL_MS);
+
+    DateTime dt(synced_epoch);
+    MESH_DEBUG_PRINTLN("NTP: synced %02d:%02d - %d/%d/%d UTC",
+                       dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+    return;
+  }
+
+  if (ntp_sync_in_progress) {
+    if (ntp_request_deadline_at && millisHasNowPassed(ntp_request_deadline_at)) {
+      ntp_sync_in_progress = false;
+      ntp_request_deadline_at = 0;
+      next_ntp_attempt_at = futureMillis(NTP_SYNC_RETRY_DELAY_MS);
+      MESH_DEBUG_PRINTLN("NTP: sync timed out");
+    }
+    return;
+  }
+
+  if (next_ntp_attempt_at && !millisHasNowPassed(next_ntp_attempt_at)) return;
+
+  startNtpSync();
 }
 
 void MyMesh::queueDiscordWebhook(const char* sender, const char* body) {
@@ -883,15 +999,7 @@ void MyMesh::queueDiscordWebhook(const char* sender, const char* body) {
 void MyMesh::pumpDiscordWebhook() {
   if (webhook_count == 0) return;
 
-  if (WiFi.status() != WL_CONNECTED) {
-    if (next_wifi_attempt_at && millisHasNowPassed(next_wifi_attempt_at)) {
-      if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) return;
-      MESH_DEBUG_PRINTLN("WiFi: not connected, retrying AP '%s'", _prefs.wifi_ssid);
-      WiFi.begin(_prefs.wifi_ssid, _prefs.wifi_pwd);
-      next_wifi_attempt_at = futureMillis(15000);
-    }
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) return;
 
   if (next_webhook_attempt_at && !millisHasNowPassed(next_webhook_attempt_at)) return;
 
@@ -1591,7 +1699,12 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_ping_channel_ready = false;
 #if defined(ESP32)
   next_wifi_attempt_at = 0;
+  next_ntp_attempt_at = 0;
+  ntp_request_deadline_at = 0;
   next_webhook_attempt_at = 0;
+  last_ntp_sync_time = 0;
+  wifi_connected_last = false;
+  ntp_sync_in_progress = false;
   webhook_head = 0;
   webhook_tail = 0;
   webhook_count = 0;
@@ -1656,7 +1769,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.discord_webhook_url[0] = 0;
   _prefs.ping_public_enabled = 0;
   _prefs.ping_public_max_replies = 0;
-  _prefs.ping_test_enabled = 0;
+  _prefs.ping_test_enabled = 1;
   _prefs.ping_test_max_replies = 3;
   _prefs.ping_simple_enabled = 0;
   _prefs.hourly_status_enabled = 1;
@@ -2090,6 +2203,26 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
         savePrefs();
         strcpy(reply, "OK");
       }
+    } else if (memcmp(sub, "ntp", 3) == 0) {
+      const char* val = sub + 3;
+      while (*val == ' ') val++;
+      if (*val == 0 || strcmp(val, "status") == 0) {
+        formatNtpStatus(reply, 160);
+      } else if (strcmp(val, "sync") == 0 || strcmp(val, "now") == 0) {
+        if (_prefs.wifi_ssid[0] == 0 || _prefs.wifi_pwd[0] == 0) {
+          strcpy(reply, "Err - wifi not set");
+        } else {
+          next_ntp_attempt_at = 0;
+          ntp_sync_in_progress = false;
+          ntp_request_deadline_at = 0;
+          if (WiFi.status() == WL_CONNECTED) {
+            startNtpSync();
+          }
+          strcpy(reply, "OK");
+        }
+      } else {
+        strcpy(reply, "Err - ??");
+      }
     } else if (strcmp(sub, "connect") == 0) {
       initWifiClient();
       strcpy(reply, "OK");
@@ -2323,6 +2456,8 @@ void MyMesh::loop() {
   mesh::Mesh::loop();
 
 #if defined(ESP32)
+  pumpWifiClient();
+  pumpNtpClient();
   pumpDiscordWebhook();
 #endif
 
