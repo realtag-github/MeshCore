@@ -257,21 +257,32 @@ static const char* findMessageBodyAllowSelf(const char* text, char* sender, size
   return text;
 }
 
-static bool containsSubstringCaseInsensitive(const char* haystack, const char* needle) {
-  if (!haystack || !needle) return false;
-  if (needle[0] == 0) return true;
-  for (const char* h = haystack; *h; ++h) {
-    const char* h_it = h;
-    const char* n_it = needle;
-    while (*h_it && *n_it &&
-           tolower(static_cast<unsigned char>(*h_it)) ==
-               tolower(static_cast<unsigned char>(*n_it))) {
-      ++h_it;
-      ++n_it;
+static uint8_t parseCommandPathHashSize(const char* text, const char* command, bool* found) {
+  if (found) *found = false;
+  if (!text || !command || command[0] == 0) return 1;
+
+  size_t command_len = strlen(command);
+  bool matched = false;
+  for (const char* cursor = text; *cursor; ++cursor) {
+    size_t i = 0;
+    while (i < command_len && cursor[i] &&
+           tolower(static_cast<unsigned char>(cursor[i])) ==
+               tolower(static_cast<unsigned char>(command[i]))) {
+      ++i;
     }
-    if (*n_it == 0) return true;
+    if (i != command_len) continue;
+
+    matched = true;
+    const char* suffix = cursor + command_len;
+    if (suffix[0] == ':' && (suffix[1] == '1' || suffix[1] == '2' || suffix[1] == '3') &&
+        !isdigit(static_cast<unsigned char>(suffix[2]))) {
+      if (found) *found = true;
+      return (uint8_t)(suffix[1] - '0');
+    }
   }
-  return false;
+
+  if (found) *found = matched;
+  return 1;
 }
 
 void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float snr) {
@@ -1221,11 +1232,13 @@ void MyMesh::sendPingReply(const mesh::GroupChannel& channel) {
 
   auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
   if (reply) {
-    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms);
+    uint8_t path_hash_size = pending_ping_path_hash_size;
+    if (path_hash_size < 1 || path_hash_size > 3) path_hash_size = 1;
+    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms, path_hash_size);
   }
 }
 
-void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name) {
+void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name, uint8_t path_hash_size) {
   if (!public_channel_ready && !test_channel_ready) return;
 
   uint8_t busy_pct = calcBusyPercent();
@@ -1248,7 +1261,8 @@ void MyMesh::sendStatusReply(const mesh::GroupChannel& channel, const char* send
 
   auto reply = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + msg_len);
   if (reply) {
-    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms);
+    if (path_hash_size < 1 || path_hash_size > 3) path_hash_size = 1;
+    sendFlood(reply, SERVER_RESPONSE_DELAY + delay_ms, path_hash_size);
   }
 }
 
@@ -1461,8 +1475,10 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
 
   if (!body) return;
   if (!isPingChannel(channel)) return;
-  bool is_ping = containsSubstringCaseInsensitive(body, "!ping");
-  bool is_status = containsSubstringCaseInsensitive(body, "!status");
+  bool is_ping = false;
+  bool is_status = false;
+  uint8_t ping_path_hash_size = parseCommandPathHashSize(body, "!ping", &is_ping);
+  uint8_t status_path_hash_size = parseCommandPathHashSize(body, "!status", &is_status);
   if (!is_ping && !is_status) return;
 
   bool is_public_channel = public_channel_ready && memcmp(channel.hash, public_channel.hash, PATH_HASH_SIZE) == 0;
@@ -1477,7 +1493,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
     StrHelper::strncpy(sender_name, "Unknown", sizeof(sender_name));
   }
   if (is_status) {
-    sendStatusReply(channel, sender_name);
+    sendStatusReply(channel, sender_name, status_path_hash_size);
     return;
   }
 
@@ -1488,6 +1504,7 @@ void MyMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Gro
   pending_ping_channel_ready = true;
   pending_ping_total = (uint8_t)min(3, (int)max_replies);
   pending_ping_retries = pending_ping_total;
+  pending_ping_path_hash_size = ping_path_hash_size;
   pending_ping_include_prefix = true;
   next_ping_send_at = 0;
 
@@ -1689,6 +1706,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   pending_ping_path[0] = 0;
   pending_ping_retries = 0;
   pending_ping_total = PING_REPLY_ATTEMPTS;
+  pending_ping_path_hash_size = 1;
   pending_ping_include_prefix = true;
   pending_ping_is_5count = false;
   next_ping_send_at = 0;

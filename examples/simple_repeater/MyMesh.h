@@ -98,6 +98,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   uint8_t reply_path_hash_size;
   uint8_t pending_ping_retries;
   uint8_t pending_ping_total;
+  uint8_t pending_ping_path_hash_size;
   bool pending_ping_include_prefix;
   bool pending_ping_is_5count;
   unsigned long next_ping_send_at;
@@ -182,7 +183,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   void initPublicChannel();
   void initTestChannel();
   void sendPingReply(const mesh::GroupChannel& channel);
-  void sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name);
+  void sendStatusReply(const mesh::GroupChannel& channel, const char* sender_name, uint8_t path_hash_size);
   void sendPublicBroadcast(const mesh::GroupChannel& channel);
   uint8_t calcBusyPercent();
   uint32_t calcBusyDelayMs(uint8_t busy_pct);
