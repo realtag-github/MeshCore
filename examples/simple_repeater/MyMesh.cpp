@@ -2383,15 +2383,27 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     const char* val = command + 9;
     while (*val == ' ') val++;
     if (*val == 0) {
-      strcpy(reply, _prefs.ping_test_enabled ? "ping.test=on" : "ping.test=off");
-    } else if (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) {
+      snprintf(reply, 160, "ping.test=%u", (unsigned)_prefs.ping_test_max_replies);
+    } else if (strcmp(val, "on") == 0) {
       _prefs.ping_test_enabled = 1;
+      _prefs.ping_test_max_replies = 3;
       savePrefs();
       strcpy(reply, "OK");
-    } else if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) {
+    } else if (strcmp(val, "off") == 0) {
       _prefs.ping_test_enabled = 0;
+      _prefs.ping_test_max_replies = 0;
       savePrefs();
       strcpy(reply, "OK");
+    } else if (val[0] >= '0' && val[0] <= '9') {
+      int count = atoi(val);
+      if (count < 0 || count > 3) {
+        strcpy(reply, "Err - 0..3");
+      } else {
+        _prefs.ping_test_max_replies = (uint8_t)count;
+        _prefs.ping_test_enabled = count > 0 ? 1 : 0;
+        savePrefs();
+        strcpy(reply, "OK");
+      }
     } else {
       strcpy(reply, "Err - ??");
     }
