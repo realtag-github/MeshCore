@@ -1,0 +1,73 @@
+name: Build Custom Repeater Binaries
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Space-separated PlatformIO environments, or 'all'"
+        required: false
+        default: "Heltec_v3_repeater heltec_v4_repeater Xiao_S3_WIO_repeater SenseCap_Solar_repeater RAK_4631_repeater"
+  push:
+    branches:
+      - main
+      - v1.15-repeater
+    paths:
+      - "src/**"
+      - "examples/simple_repeater/**"
+      - "variants/**"
+      - "boards/**"
+      - "tools/**"
+      - "arch/**"
+      - "bin/**"
+      - "build.sh"
+      - "platformio.ini"
+      - ".github/actions/setup-build-environment/action.yml"
+      - ".github/workflows/build-custom-repeater-binaries.yml"
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Firmwares
+        env:
+          DEFAULT_TARGETS: "Heltec_v3_repeater heltec_v4_repeater Xiao_S3_WIO_repeater SenseCap_Solar_repeater RAK_4631_repeater"
+          REQUESTED_TARGETS: ${{ inputs.targets || '' }}
+        run: |
+          set -euo pipefail
+
+          version="${GIT_TAG_VERSION:-${GITHUB_REF_NAME}}"
+          version="${version//\//-}"
+          export FIRMWARE_VERSION="${version}"
+
+          targets="${REQUESTED_TARGETS:-$DEFAULT_TARGETS}"
+          if [ "${targets}" = "all" ]; then
+            /usr/bin/env bash build.sh build-repeater-firmwares
+          else
+            /usr/bin/env bash build.sh build-firmware ${targets}
+          fi
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-repeater-binaries-${{ github.run_id }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'release'
+        with:
+          files: out/*
